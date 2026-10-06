@@ -25,16 +25,97 @@ from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 
-def load_saved_history():
-    """Loads historical search sessions from data/history.json safely."""
-    if not os.path.exists(HISTORY_FILE):
-        return []
+def sync_from_remote_gist():
+    """Optional cloud backup: loads history from GitHub Gist if GIST_ID & GIST_TOKEN are provided."""
+    token = os.environ.get("GIST_TOKEN") or st.secrets.get("GIST_TOKEN", None)
+    gist_id = os.environ.get("GIST_ID") or st.secrets.get("GIST_ID", None)
+    if not token or not gist_id:
+        return None
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
+        import requests
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        r = requests.get(f"https://api.github.com/gists/{gist_id}", headers=headers, timeout=5)
+        if r.status_code == 200:
+            files = r.json().get("files", {})
+            if "history.json" in files:
+                content = files["history.json"].get("content", "[]")
+                data = json.loads(content)
+                if isinstance(data, list):
+                    return data
     except Exception:
-        return []
+        pass
+    return None
+
+def sync_to_remote_gist(history_data):
+    """Optional cloud backup: saves history to GitHub Gist if GIST_ID & GIST_TOKEN are provided."""
+    token = os.environ.get("GIST_TOKEN") or st.secrets.get("GIST_TOKEN", None)
+    gist_id = os.environ.get("GIST_ID") or st.secrets.get("GIST_ID", None)
+    if not token or not gist_id:
+        return False
+    try:
+        import requests
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        payload = {
+            "files": {
+                "history.json": {
+                    "content": json.dumps(history_data, indent=2, ensure_ascii=False)
+                }
+            }
+        }
+        r = requests.patch(f"https://api.github.com/gists/{gist_id}", headers=headers, json=payload, timeout=5)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+def load_saved_history():
+    """Loads historical search sessions from data/history.json or cloud backup safely."""
+    # Try local file first
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    return data
+        except Exception:
+            pass
+
+    # Safety net: check remote cloud backup if configured
+    remote_data = sync_from_remote_gist()
+    if remote_data:
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(remote_data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+        return remote_data
+
+    return []
+
+def import_backup_history(uploaded_file):
+    """Imports and merges uploaded JSON backup into history safely."""
+    try:
+        data = json.load(uploaded_file)
+        if not isinstance(data, list):
+            return False, "Uploaded file does not contain a valid session list."
+        current_history = load_saved_history()
+        existing_ids = {item.get("id") for item in current_history if isinstance(item, dict) and "id" in item}
+        merged_count = 0
+        for item in data:
+            if isinstance(item, dict):
+                i_id = item.get("id") or f"hist_{int(time.time()*1000)}_{merged_count}"
+                if i_id not in existing_ids:
+                    item["id"] = i_id
+                    current_history.append(item)
+                    existing_ids.add(i_id)
+                    merged_count += 1
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(current_history, f, indent=2, ensure_ascii=False)
+        sync_to_remote_gist(current_history)
+        return True, f"✅ Successfully restored {merged_count} historical searches!"
+    except Exception as e:
+        return False, f"Import error: {str(e)}"
 
 def save_session_to_history(entry):
     """Appends and persists a search session into data/history.json safely."""
@@ -68,6 +149,7 @@ def save_session_to_history(entry):
             
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
+        sync_to_remote_gist(history)
         return True
     except Exception:
         return False
@@ -79,6 +161,7 @@ def delete_history_session(session_id):
         history = [item for item in history if item.get("id") != session_id]
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
+        sync_to_remote_gist(history)
         return True
     except Exception:
         return False
@@ -89,6 +172,7 @@ def clear_all_history():
         os.makedirs(DATA_DIR, exist_ok=True)
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump([], f)
+        sync_to_remote_gist([])
         return True
     except Exception:
         return False
@@ -703,6 +787,37 @@ with tab_history:
         if st.button("🗑️ Clear History", type="secondary", use_container_width=True, disabled=not history_list):
             clear_all_history()
             st.rerun()
+
+    # PERSISTENT BACKUP & REBOOT SAFETY NET
+    with st.expander("💾 Persistent Backup & Cloud Safety Net (Survives Cloud Reboots)", expanded=False):
+        st.markdown("""
+        **🛡️ Cloud Reboot Safety Net:**
+        Cloud containers (like Streamlit Cloud) may reset their local disks on server reboots or redeployments.
+        Use this safety net to guarantee your data is **100% safeguarded**:
+        - **1-Click Backup**: Download your full search archive (.json) to your computer anytime.
+        - **1-Click Restore**: Drop your backup file here after any reboot to instantly restore all past searches, brands, and founders!
+        - **Cloud Sync Ready**: Add `GIST_TOKEN` & `GIST_ID` in Streamlit Secrets for 100% automated background cloud synchronization.
+        """)
+        bk_c1, bk_c2 = st.columns([1.5, 2])
+        with bk_c1:
+            full_json_str = json.dumps(history_list, indent=2, ensure_ascii=False)
+            st.download_button(
+                "📥 Download History Backup (.json)",
+                data=full_json_str,
+                file_name=f"amazon_pl_history_backup_{int(time.time())}.json",
+                mime="application/json",
+                use_container_width=True,
+                disabled=not history_list
+            )
+        with bk_c2:
+            uploaded_bk = st.file_uploader("📤 Restore History from Backup (.json):", type=["json"], key="history_restore_uploader")
+            if uploaded_bk is not None:
+                success, msg = import_backup_history(uploaded_bk)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
 
     history_search = st.text_input("🔍 Search saved searches by keyword, brand name, or marketplace:", "", placeholder="Filter history...")
     
