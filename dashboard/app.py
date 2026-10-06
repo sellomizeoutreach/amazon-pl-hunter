@@ -1,16 +1,102 @@
 import os
 import sys
 import time
+import json
+import re
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import streamlit as st
 
-# Add parent directory to path so backend modules can be imported
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Ensure root directory is in sys.path
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from backend.amazon_scraper import AmazonExtractor
+from backend.pl_detector import evaluate_private_label
+from backend.linkedin_finder import find_decision_maker
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
+# ==========================================
+# PERSISTENT HISTORY STORAGE (File-backed)
+# ==========================================
+DATA_DIR = os.path.join(ROOT_DIR, "data")
+HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
+
+def load_saved_history():
+    """Loads historical search sessions from data/history.json."""
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def save_session_to_history(entry):
+    """Appends and persists a search session into data/history.json."""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        history = load_saved_history()
+        
+        # Calculate summary numbers
+        records = entry.get("records", [])
+        under_100_count = sum(1 for r in records if int(r.get("reviews") or 0) < 100)
+        founders_count = sum(1 for r in records if r.get("founder_name") and r.get("founder_name").lower() != "not found")
+        linkedin_count = sum(1 for r in records if r.get("linkedin_url") and r.get("linkedin_url").lower() != "not found")
+        
+        session_item = {
+            "id": f"hist_{int(time.time()*1000)}",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "formatted_time": datetime.now().strftime("%b %d, %H:%M"),
+            "type": entry.get("type", "single_search"),
+            "query": entry.get("query", "Search"),
+            "marketplace": entry.get("marketplace", "amazon.com"),
+            "pages": entry.get("pages", 1),
+            "brand_count": len(records),
+            "under_100_count": under_100_count,
+            "founders_count": founders_count,
+            "linkedin_count": linkedin_count,
+            "records": records
+        }
+        
+        history.insert(0, session_item)
+        if len(history) > 100:
+            history = history[:100]
+            
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        st.error(f"Failed to save history: {e}")
+        return False
+
+def delete_history_session(session_id):
+    """Deletes a single history session."""
+    try:
+        history = load_saved_history()
+        history = [item for item in history if item.get("id") != session_id]
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+def clear_all_history():
+    """Wipes all search history."""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f)
+        return True
+    except Exception:
+        return False
+
+# ==========================================
+# PAGE CONFIGURATION & STYLING
+# ==========================================
 st.set_page_config(
     page_title="Amazon Private Label & Decision Maker Hunter",
     page_icon="📦",
@@ -18,7 +104,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling
 st.markdown("""
 <style>
     .main-header {
@@ -28,248 +113,474 @@ st.markdown("""
         margin-bottom: 2px;
     }
     .sub-header {
-        font-size: 14px;
+        font-size: 13px;
         color: #94a3b8;
-        margin-bottom: 20px;
+        margin-bottom: 16px;
     }
-    .metric-box {
+    .metric-card {
         background: #1e293b;
-        padding: 15px;
-        border-radius: 8px;
         border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 12px;
         text-align: center;
     }
-    .badge-low-rev {
-        background-color: rgba(16, 185, 129, 0.2);
+    .metric-val {
+        font-size: 22px;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .metric-lbl {
+        font-size: 11px;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .badge-rev-low {
+        background: rgba(16, 185, 129, 0.2);
         color: #34d399;
-        padding: 2px 8px;
+        font-weight: 600;
+        padding: 2px 6px;
         border-radius: 4px;
-        font-weight: bold;
+        font-size: 11px;
+    }
+    .badge-rev-high {
+        background: rgba(148, 163, 184, 0.2);
+        color: #cbd5e1;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+    }
+    .hist-card {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 10px;
+    }
+    .hist-card-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .hist-tag {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+    }
+    .hist-tag-single {
+        background: rgba(56, 189, 248, 0.2);
+        color: #38bdf8;
+    }
+    .hist-tag-bulk {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
     }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">📦 Amazon Private Label & Decision Maker Hunter</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Crawl up to 10 pages, evaluate Buy Box and all sellers for PL ownership, filter low-competition brands (&lt; 100 reviews), and discover founders on LinkedIn.</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Automated Amazon Brand Hunting • Multi-Page Crawling • Low-Competition Filter (&lt; 100 Reviews) • Founder LinkedIn Discovery • Bulk Operations • Persistent History</div>', unsafe_allow_html=True)
 
-# Session state initialization
-if "results" not in st.session_state:
-    st.session_state.results = []
+# Initialize Session State
+if "active_results" not in st.session_state:
+    st.session_state.active_results = []
 if "is_running" not in st.session_state:
     st.session_state.is_running = False
 if "should_stop" not in st.session_state:
     st.session_state.should_stop = False
-if "history" not in st.session_state:
-    st.session_state.history = []
 
-# Sidebar settings
+# ==========================================
+# GLOBAL SIDEBAR CONTROLS
+# ==========================================
 with st.sidebar:
-    st.header("⚙️ Search Configuration")
-    
-    query = st.text_input(
-        "Search Keyword or Category URL",
-        placeholder="e.g. wireless earbuds or paste URL",
-        value=""
-    )
-    
+    st.header("⚙️ Global Settings")
     marketplace = st.selectbox(
         "Amazon Marketplace",
         options=["amazon.com", "amazon.co.uk", "amazon.de", "amazon.ca", "amazon.fr", "amazon.it", "amazon.es"],
         index=0
     )
     
-    max_pages = st.slider(
-        "Number of Pages to Crawl",
-        min_value=1,
-        max_value=10,
-        value=3,
-        help="Amazon search results will be scraped up to this page count."
-    )
-    
-    filter_under_100_crawl = st.checkbox(
-        "🔥 Only Extract < 100 Review Brands",
-        value=False,
-        help="When checked, only saves brands whose products have less than 100 reviews (Low Competition PL)."
-    )
-    
     delay = st.slider(
         "Request Delay (seconds)",
-        min_value=0.5,
+        min_value=0.3,
         max_value=3.0,
-        value=0.8,
+        value=0.6,
         step=0.1,
-        help="Delay between product requests to prevent rate limiting."
+        help="Delay between product card lookups to prevent rate limiting."
     )
     
     st.divider()
     st.markdown("""
-    ### 💡 Features & PL Rules:
-    - **No Backend Server Needed**: Runs 100% self-contained in Streamlit.
-    - **Buy Box & Multi-Seller Check**: Verifies brand ownership across all sellers.
-    - **< 100 Reviews Filter**: Discovers low-competition opportunities.
-    - **Founder Discovery**: Auto-detects CEOs/Founders on LinkedIn.
-    - **Auto-Deduplication**: Never produces duplicate brands.
+    ### 🎯 Private Label Hunter Rules:
+    - **Single/Multi-Seller Verification**: Checks Buy Box and all other sellers under the listing for brand owner match.
+    - **A+ & Storefront Signals**: Evaluates brand registry and trademark signals.
+    - **Negates Megabrands**: Ignores retail giants, enterprise brands, and Amazon 1P listings.
+    - **LinkedIn Finder**: Automatically queries and identifies Founder, CEO, or Brand Owner.
     """)
 
-# Action buttons
-start_col, stop_col, _ = st.columns([1.2, 1, 4])
-with start_col:
-    start_btn = st.button("🚀 Start PL Hunt", type="primary", use_container_width=True, disabled=st.session_state.is_running)
+# ==========================================
+# NAVIGATION TABS
+# ==========================================
+tab_single, tab_bulk, tab_history = st.tabs([
+    "🌐 Single Search & Crawl",
+    "⚡ Bulk Operations",
+    "📜 Search History"
+])
 
-with stop_col:
-    stop_btn = st.button("⏹️ Stop Hunt", use_container_width=True, disabled=not st.session_state.is_running)
+# ----------------------------------------------------
+# TAB 1: SINGLE SEARCH & CATEGORY CRAWL
+# ----------------------------------------------------
+with tab_single:
+    col_q, col_p, col_f = st.columns([3, 1.2, 1.8])
+    with col_q:
+        single_query = st.text_input(
+            "Search Keyword or Category URL",
+            placeholder="e.g. wireless earbuds, silicone kitchen utensils, posture corrector",
+            key="input_single_query"
+        )
+    with col_p:
+        single_pages = st.slider(
+            "Pages to Crawl",
+            min_value=1,
+            max_value=10,
+            value=3,
+            key="slider_single_pages"
+        )
+    with col_f:
+        single_filter_100 = st.checkbox(
+            "🔥 Only Extract < 100 Review Brands",
+            value=False,
+            help="Pre-filters crawler: only saves brands whose listings have less than 100 reviews.",
+            key="chk_single_100"
+        )
 
-if stop_btn:
-    st.session_state.should_stop = True
+    btn_c1, btn_c2, _ = st.columns([1.2, 1, 4])
+    with btn_c1:
+        btn_start_single = st.button("🚀 Start Search", type="primary", use_container_width=True, disabled=st.session_state.is_running)
+    with btn_c2:
+        btn_stop_single = st.button("⏹️ Stop Search", use_container_width=True, disabled=not st.session_state.is_running)
 
-if start_btn:
-    if not query.strip():
-        st.error("Please enter a search keyword or category URL.")
-    else:
-        st.session_state.is_running = True
-        st.session_state.should_stop = False
-        st.session_state.results = []
+    if btn_stop_single:
+        st.session_state.should_stop = True
 
-        status_container = st.empty()
-        progress_bar = st.progress(0)
-        table_container = st.empty()
-
-        def on_progress(update):
-            msg = update.get("message", "")
-            curr_page = update.get("current_page", 1)
-            pct = min(int((curr_page / max_pages) * 100), 95)
-            progress_bar.progress(pct)
-            status_container.info(f"⏳ {msg}")
-
-            if "record" in update:
-                st.session_state.results.append(update["record"])
-                df_temp = pd.DataFrame(st.session_state.results)
-                display_cols = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
-                table_container.dataframe(
-                    df_temp[[c for c in display_cols if c in df_temp.columns]],
-                    use_container_width=True
-                )
-
-        def check_stop() -> bool:
-            return st.session_state.should_stop
-
-        try:
-            extractor = AmazonExtractor(marketplace=marketplace, delay_between_requests=delay)
-            max_rev_param = 100 if filter_under_100_crawl else None
-            final_results = extractor.run_pipeline(
-                query=query.strip(),
-                max_pages=max_pages,
-                max_reviews=max_rev_param,
-                progress_callback=on_progress,
-                should_stop_check=check_stop
-            )
-            st.session_state.results = final_results
-            progress_bar.progress(100)
-            
-            if st.session_state.should_stop:
-                status_container.warning(f"⏹️ Stopped by user. Extracted {len(final_results)} PL brands.")
-            else:
-                status_container.success(f"✅ Finished! Found {len(final_results)} unique Private Label brands.")
-
-            # Save to session history
-            if final_results:
-                st.session_state.history.append({
-                    "timestamp": datetime.now().strftime("%H:%M:%S"),
-                    "query": query.strip(),
-                    "marketplace": marketplace,
-                    "pages": max_pages,
-                    "records": list(final_results),
-                    "count": len(final_results)
-                })
-
-        except Exception as e:
-            st.error(f"Error during extraction: {e}")
-        finally:
-            st.session_state.is_running = False
+    if btn_start_single:
+        if not single_query.strip():
+            st.error("Please enter a valid Amazon search keyword or URL.")
+        else:
+            st.session_state.is_running = True
             st.session_state.should_stop = False
+            st.session_state.active_results = []
+            
+            prog_status = st.empty()
+            prog_bar = st.progress(0)
+            live_table = st.empty()
+            
+            def single_progress(update):
+                msg = update.get("message", "")
+                curr_p = update.get("current_page", 1)
+                prog_bar.progress(min(int((curr_p / single_pages) * 100), 95))
+                prog_status.info(f"⏳ {msg}")
+                
+                if "record" in update:
+                    st.session_state.active_results.append(update["record"])
+                    df_live = pd.DataFrame(st.session_state.active_results)
+                    cols = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
+                    live_table.dataframe(df_live[[c for c in cols if c in df_live.columns]], use_container_width=True)
 
-# Display Results Section
-if st.session_state.results:
-    st.divider()
-    df = pd.DataFrame(st.session_state.results)
+            try:
+                extractor = AmazonExtractor(marketplace=marketplace, delay_between_requests=delay)
+                max_rev = 100 if single_filter_100 else None
+                results = extractor.run_pipeline(
+                    query=single_query.strip(),
+                    max_pages=single_pages,
+                    max_reviews=max_rev,
+                    progress_callback=single_progress,
+                    should_stop_check=lambda: st.session_state.should_stop
+                )
+                st.session_state.active_results = results
+                prog_bar.progress(100)
+                
+                if st.session_state.should_stop:
+                    prog_status.warning(f"⏹️ Stopped by user. Extracted {len(results)} PL brands.")
+                else:
+                    prog_status.success(f"✅ Search complete! Found {len(results)} unique Private Label brands.")
+                
+                # Auto-save session to history
+                if results:
+                    save_session_to_history({
+                        "type": "single_search",
+                        "query": single_query.strip(),
+                        "marketplace": marketplace,
+                        "pages": single_pages,
+                        "records": list(results)
+                    })
 
-    # Ensure reviews column is numeric
-    if "reviews" in df.columns:
-        df["reviews"] = pd.to_numeric(df["reviews"], errors="coerce").fillna(0).astype(int)
+            except Exception as e:
+                st.error(f"Extraction encountered an error: {e}")
+            finally:
+                st.session_state.is_running = False
+                st.session_state.should_stop = False
+
+# ----------------------------------------------------
+# TAB 2: BULK OPERATIONS
+# ----------------------------------------------------
+with tab_bulk:
+    bulk_mode = st.radio(
+        "Choose Bulk Operation:",
+        options=["⚡ Bulk Keyword Hunting", "🔍 Bulk ASIN PL Audit"],
+        horizontal=True
+    )
+    
+    if bulk_mode == "⚡ Bulk Keyword Hunting":
+        st.markdown("**Enter multiple search keywords (one per line). The engine will crawl each keyword, verify PL sellers, and combine all discovered brands into a single deduplicated dataset.**")
+        
+        b_col_txt, b_col_opt = st.columns([3, 1.5])
+        with b_col_txt:
+            bulk_keywords_text = st.text_area(
+                "Keywords List (one per line):",
+                placeholder="wireless earbuds\nposture corrector\nyoga mat non slip\nsilicone baking mat\nbamboo cutting board",
+                height=130
+            )
+        with b_col_opt:
+            bulk_kw_pages = st.slider("Pages per Keyword:", min_value=1, max_value=5, value=2)
+            bulk_kw_filter_100 = st.checkbox("🔥 Only Extract < 100 Review Brands", value=False)
+            btn_start_bulk_kw = st.button("🚀 Start Bulk Keyword Hunt", type="primary", use_container_width=True, disabled=st.session_state.is_running)
+
+        if btn_start_bulk_kw:
+            raw_kws = [k.strip() for k in bulk_keywords_text.splitlines() if k.strip()]
+            if not raw_kws:
+                st.error("Please enter at least one keyword.")
+            else:
+                st.session_state.is_running = True
+                st.session_state.should_stop = False
+                st.session_state.active_results = []
+                
+                b_overall_bar = st.progress(0)
+                b_overall_msg = st.empty()
+                b_table = st.empty()
+                
+                extractor = AmazonExtractor(marketplace=marketplace, delay_between_requests=delay)
+                all_bulk_records = []
+                seen_b_set = set()
+                
+                try:
+                    for i, kw in enumerate(raw_kws):
+                        if st.session_state.should_stop:
+                            break
+                        
+                        b_overall_msg.info(f"⏳ Searching keyword {i+1} of {len(raw_kws)}: **'{kw}'**...")
+                        b_overall_bar.progress(int((i / len(raw_kws)) * 100))
+                        
+                        max_rev = 100 if bulk_kw_filter_100 else None
+                        kw_results = extractor.run_pipeline(
+                            query=kw,
+                            max_pages=bulk_kw_pages,
+                            max_reviews=max_rev,
+                            should_stop_check=lambda: st.session_state.should_stop
+                        )
+                        
+                        for r in kw_results:
+                            b_name = (r.get("brand_name") or "").lower().strip()
+                            if b_name and b_name not in seen_b_set:
+                                seen_b_set.add(b_name)
+                                all_bulk_records.append(r)
+                        
+                        st.session_state.active_results = list(all_bulk_records)
+                        df_b_live = pd.DataFrame(all_bulk_records)
+                        cols = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
+                        b_table.dataframe(df_b_live[[c for c in cols if c in df_b_live.columns]], use_container_width=True)
+                    
+                    b_overall_bar.progress(100)
+                    b_overall_msg.success(f"✅ Bulk hunt complete! Extracted {len(all_bulk_records)} unique Private Label brands across {len(raw_kws)} keywords.")
+                    
+                    if all_bulk_records:
+                        save_session_to_history({
+                            "type": "bulk_keywords",
+                            "query": f"Bulk: {len(raw_kws)} keywords ({', '.join(raw_kws[:3])}...)",
+                            "marketplace": marketplace,
+                            "pages": bulk_kw_pages,
+                            "records": list(all_bulk_records)
+                        })
+                except Exception as e:
+                    st.error(f"Bulk keyword extraction error: {e}")
+                finally:
+                    st.session_state.is_running = False
+                    st.session_state.should_stop = False
+
     else:
-        df["reviews"] = 0
+        st.markdown("**Audit a list of ASINs directly. Concurrently inspects buy box seller, brand store, multi-seller roster, review counts, and finds decision makers on LinkedIn.**")
+        asin_text = st.text_area(
+            "Paste ASINs (comma, space, or newline separated):",
+            placeholder="B08N5WRWNW, B07XJ8C8F5, B09B8W2T8S\nB08XYZ1234",
+            height=120
+        )
+        btn_start_bulk_asin = st.button("🔍 Run Bulk ASIN Audit", type="primary")
+        
+        if btn_start_bulk_asin:
+            asins = list(dict.fromkeys(re.findall(r'[B0-9A-Z]{10}', asin_text.upper())))
+            if not asins:
+                st.error("No valid 10-character Amazon ASINs found in input.")
+            else:
+                st.info(f"Auditing {len(asins)} ASINs in parallel...")
+                extractor = AmazonExtractor(marketplace=marketplace, delay_between_requests=0.2)
+                audit_records = []
+                
+                asin_prog = st.progress(0)
+                asin_status = st.empty()
+                
+                def audit_asin(asin):
+                    details = extractor.inspect_asin_details(asin)
+                    b_name = details.get("brand") or ""
+                    if not b_name:
+                        return None
+                    
+                    pl_eval = evaluate_private_label(
+                        brand_name=b_name,
+                        buybox_seller=details.get("buybox_seller", ""),
+                        all_sellers=details.get("all_sellers", []),
+                        has_brand_store=details.get("has_brand_store", False),
+                        has_aplus_content=details.get("has_aplus", False),
+                        total_offers_count=details.get("total_offers", 1)
+                    )
+                    
+                    if not pl_eval["is_private_label"]:
+                        return None
+                    
+                    decision_maker = find_decision_maker(b_name)
+                    return {
+                        "asin": asin,
+                        "brand_name": b_name,
+                        "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
+                        "buybox_seller": details.get("buybox_seller", ""),
+                        "reviews": int(details.get("reviews") or 0),
+                        "founder_name": decision_maker.get("founder_name", "Not Found"),
+                        "linkedin_url": decision_maker.get("linkedin_url", "Not Found"),
+                        "decision_maker_role": decision_maker.get("role_title", ""),
+                        "pl_confidence": pl_eval.get("confidence", "High"),
+                        "product_url": f"{extractor.base_url}/dp/{asin}"
+                    }
 
-    # Top Metrics
-    total_pl = len(df)
-    under_100_count = int((df["reviews"] < 100).sum())
-    founders_found = len(df[df["founder_name"].str.lower() != "not found"])
-    linkedin_found = len(df[df["linkedin_url"].str.lower() != "not found"])
+                completed = 0
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    futures = {executor.submit(audit_asin, a): a for a in asins}
+                    for fut in as_completed(futures):
+                        completed += 1
+                        asin_prog.progress(int((completed / len(asins)) * 100))
+                        res = fut.result()
+                        if res:
+                            audit_records.append(res)
+                
+                st.session_state.active_results = list(audit_records)
+                asin_status.success(f"✅ Audit complete! Verified {len(audit_records)} Private Label brands out of {len(asins)} ASINs.")
+                
+                if audit_records:
+                    save_session_to_history({
+                        "type": "bulk_asins",
+                        "query": f"Bulk ASINs ({len(asins)} tested)",
+                        "marketplace": marketplace,
+                        "pages": 1,
+                        "records": list(audit_records)
+                    })
 
+# ==========================================
+# ACTIVE RESULTS EXPLORER & FILTERS (Always Visible When Results Exist)
+# ==========================================
+if st.session_state.active_results:
+    st.divider()
+    df_raw = pd.DataFrame(st.session_state.active_results)
+    
+    # Ensure reviews column is numeric
+    if "reviews" in df_raw.columns:
+        df_raw["reviews"] = pd.to_numeric(df_raw["reviews"], errors="coerce").fillna(0).astype(int)
+    else:
+        df_raw["reviews"] = 0
+
+    total_brands = len(df_raw)
+    under_100_total = int((df_raw["reviews"] < 100).sum())
+    founders_total = len(df_raw[df_raw["founder_name"].str.lower() != "not found"]) if "founder_name" in df_raw else 0
+    linkedin_total = len(df_raw[df_raw["linkedin_url"].str.lower() != "not found"]) if "linkedin_url" in df_raw else 0
+
+    # Top Metrics Bar
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Total PL Brands", total_pl)
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{total_brands}</div><div class="metric-lbl">Total PL Brands</div></div>', unsafe_allow_html=True)
     with m2:
-        st.metric("🔥 < 100 Review Brands", f"{under_100_count} ({int(under_100_count/total_pl*100) if total_pl else 0}%)")
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {under_100_total}</div><div class="metric-lbl">&lt; 100 Reviews ({int(under_100_total/total_brands*100) if total_brands else 0}%)</div></div>', unsafe_allow_html=True)
     with m3:
-        st.metric("Founders Identified", founders_found)
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{founders_total}</div><div class="metric-lbl">Founders Found</div></div>', unsafe_allow_html=True)
     with m4:
-        st.metric("LinkedIn Profiles", linkedin_found)
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{linkedin_total}</div><div class="metric-lbl">LinkedIn Profiles</div></div>', unsafe_allow_html=True)
 
-    # Filter Bar
-    filter_col1, filter_col2 = st.columns([1.5, 2.5])
-    with filter_col1:
-        view_filter = st.radio(
-            "Filter View:",
-            options=["All Brands", f"🔥 Less than 100 Reviews ({under_100_count})"],
+    st.write("")
+    
+    # Interactive Filter Controls Bar
+    st.subheader("🎛️ Results Filter & Search")
+    f_c1, f_c2, f_c3 = st.columns([2, 1.5, 2.5])
+    with f_c1:
+        filter_mode = st.radio(
+            "Quick Filter:",
+            options=["All Brands", f"🔥 Less than 100 Reviews ({under_100_total})", "👤 Founder Found Only", "🔗 LinkedIn Profile Found"],
             horizontal=True
         )
-    with filter_col2:
-        search_filter = st.text_input("🔍 Search Brand, Seller, or Founder:", "", placeholder="Type to filter...")
+    with f_c2:
+        max_rev_cap = st.number_input("Max Reviews Cap (0 = Unlimited):", min_value=0, max_value=50000, value=0, step=50)
+    with f_c3:
+        text_search = st.text_input("🔍 Live Search (Brand, Seller, ASIN, Founder):", placeholder="Type keyword to filter...")
 
-    # Apply filters
-    display_df = df.copy()
-    if "Less than 100 Reviews" in view_filter:
-        display_df = display_df[display_df["reviews"] < 100]
+    # Apply Filters
+    df_filtered = df_raw.copy()
+    if "Less than 100 Reviews" in filter_mode:
+        df_filtered = df_filtered[df_filtered["reviews"] < 100]
+    elif "Founder Found Only" in filter_mode:
+        df_filtered = df_filtered[df_filtered["founder_name"].str.lower() != "not found"]
+    elif "LinkedIn Profile Found" in filter_mode:
+        df_filtered = df_filtered[df_filtered["linkedin_url"].str.lower() != "not found"]
 
-    if search_filter.strip():
-        q_lower = search_filter.strip().lower()
-        display_df = display_df[
-            display_df["brand_name"].str.lower().str.contains(q_lower, na=False) |
-            display_df["matched_seller"].str.lower().str.contains(q_lower, na=False) |
-            display_df["founder_name"].str.lower().str.contains(q_lower, na=False)
+    if max_rev_cap > 0:
+        df_filtered = df_filtered[df_filtered["reviews"] <= max_rev_cap]
+
+    if text_search.strip():
+        q_l = text_search.strip().lower()
+        df_filtered = df_filtered[
+            df_filtered["brand_name"].str.lower().str.contains(q_l, na=False) |
+            df_filtered["matched_seller"].str.lower().str.contains(q_l, na=False) |
+            df_filtered["founder_name"].str.lower().str.contains(q_l, na=False) |
+            df_filtered["asin"].str.lower().str.contains(q_l, na=False)
         ]
 
-    # Export Buttons (Exports currently filtered view)
-    export_records = display_df.to_dict(orient="records")
-    csv_bytes = export_to_csv_bytes(export_records)
-    excel_bytes = export_to_excel_bytes(export_records)
+    # Bulk Export Controls
+    records_to_export = df_filtered.to_dict(orient="records")
+    csv_data = export_to_csv_bytes(records_to_export)
+    excel_data = export_to_excel_bytes(records_to_export)
 
-    exp_c1, exp_c2, _ = st.columns([1.2, 1.2, 3])
-    with exp_c1:
+    exp_col1, exp_col2, exp_info = st.columns([1.2, 1.2, 3])
+    with exp_col1:
         st.download_button(
-            label=f"📄 Download CSV ({len(display_df)})",
-            data=csv_bytes,
+            label=f"📄 Download CSV ({len(df_filtered)})",
+            data=csv_data,
             file_name=f"amazon_pl_brands_{int(time.time())}.csv",
             mime="text/csv",
             use_container_width=True
         )
-    with exp_c2:
+    with exp_col2:
         st.download_button(
-            label=f"📊 Download Excel ({len(display_df)})",
-            data=excel_bytes,
+            label=f"📊 Download Excel ({len(df_filtered)})",
+            data=excel_data,
             file_name=f"amazon_pl_brands_{int(time.time())}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+    with exp_info:
+        st.caption(f"Showing **{len(df_filtered)}** of **{total_brands}** total extracted brands. Export contains currently filtered rows.")
 
-    # Data Table (Brand Name and PL Seller together)
-    st.subheader(f"📋 Extracted Brands ({len(display_df)} shown)")
-    
-    preferred_cols = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence", "price", "product_title", "product_url"]
-    active_cols = [c for c in preferred_cols if c in display_df.columns]
-    
+    # Results Table - Brand Name & PL Seller adjacent
+    cols_order = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence", "price", "product_title", "product_url"]
+    display_cols = [c for c in cols_order if c in df_filtered.columns]
+
     st.dataframe(
-        display_df[active_cols],
+        df_filtered[display_cols],
         column_config={
             "asin": st.column_config.TextColumn("ASIN"),
             "brand_name": st.column_config.TextColumn("Brand Name"),
@@ -286,11 +597,129 @@ if st.session_state.results:
         hide_index=True
     )
 
-# Search History Expander
-if st.session_state.history:
-    with st.expander(f"📜 Search History ({len(st.session_state.history)} searches in this session)"):
-        for idx, hist in enumerate(reversed(st.session_state.history)):
-            st.markdown(f"**Search #{len(st.session_state.history) - idx}** [{hist['timestamp']}] — **Keyword**: `{hist['query']}` | **Marketplace**: `{hist['marketplace']}` | **Found**: `{hist['count']} brands`")
-            if st.button(f"👁️ Load Search #{len(st.session_state.history) - idx} into Table", key=f"hist_load_{idx}"):
-                st.session_state.results = hist["records"]
-                st.rerun()
+# ----------------------------------------------------
+# TAB 3: SEARCH HISTORY (Persistent)
+# ----------------------------------------------------
+with tab_history:
+    history_list = load_saved_history()
+    
+    # Global History Header & Summary
+    total_saved_sessions = len(history_list)
+    all_history_records = []
+    seen_all_brands = set()
+    
+    for item in history_list:
+        for r in item.get("records", []):
+            b_norm = (r.get("brand_name") or "").lower().strip()
+            if b_norm and b_norm not in seen_all_brands:
+                seen_all_brands.add(b_norm)
+                all_history_records.append(r)
+
+    hist_under_100 = sum(1 for r in all_history_records if int(r.get("reviews") or 0) < 100)
+    hist_founders = sum(1 for r in all_history_records if r.get("founder_name") and r.get("founder_name").lower() != "not found")
+
+    h_m1, h_m2, h_m3, h_m4 = st.columns(4)
+    with h_m1:
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{total_saved_sessions}</div><div class="metric-lbl">Saved Searches</div></div>', unsafe_allow_html=True)
+    with h_m2:
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{len(all_history_records)}</div><div class="metric-lbl">Unique Brands Saved</div></div>', unsafe_allow_html=True)
+    with h_m3:
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {hist_under_100}</div><div class="metric-lbl">&lt; 100 Review Brands</div></div>', unsafe_allow_html=True)
+    with h_m4:
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{hist_founders}</div><div class="metric-lbl">Founders Identified</div></div>', unsafe_allow_html=True)
+
+    st.write("")
+    
+    # Global History Actions Bar
+    h_act1, h_act2, h_act3, h_act4 = st.columns([1.5, 1.5, 1.5, 1.2])
+    with h_act1:
+        if st.button("👁️ Load All History into Table", use_container_width=True, disabled=not all_history_records):
+            st.session_state.active_results = list(all_history_records)
+            st.rerun()
+    with h_act2:
+        if all_history_records:
+            all_csv = export_to_csv_bytes(all_history_records)
+            st.download_button("📄 Export All (CSV)", data=all_csv, file_name=f"amazon_pl_master_history_{int(time.time())}.csv", mime="text/csv", use_container_width=True)
+        else:
+            st.button("📄 Export All (CSV)", disabled=True, use_container_width=True)
+    with h_act3:
+        if all_history_records:
+            all_excel = export_to_excel_bytes(all_history_records)
+            st.download_button("📊 Export All (Excel)", data=all_excel, file_name=f"amazon_pl_master_history_{int(time.time())}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        else:
+            st.button("📊 Export All (Excel)", disabled=True, use_container_width=True)
+    with h_act4:
+        if st.button("🗑️ Clear History", type="secondary", use_container_width=True, disabled=not history_list):
+            clear_all_history()
+            st.rerun()
+
+    # Search Filter across history
+    history_search = st.text_input("🔍 Search saved searches by keyword, brand name, or marketplace:", "", placeholder="Filter history...")
+    
+    filtered_history = history_list
+    if history_search.strip():
+        h_q = history_search.strip().lower()
+        filtered_history = [
+            item for item in history_list
+            if h_q in item.get("query", "").lower()
+            or h_q in item.get("marketplace", "").lower()
+            or any(h_q in r.get("brand_name", "").lower() for r in item.get("records", []))
+            or any(h_q in r.get("matched_seller", "").lower() for r in item.get("records", []))
+        ]
+
+    st.write("")
+    
+    if not filtered_history:
+        if history_search:
+            st.info(f"No saved searches matching '{history_search}'.")
+        else:
+            st.info("No search history saved yet. Any single or bulk searches will automatically be stored here and remain even after page reloads!")
+    else:
+        for idx, item in enumerate(filtered_history):
+            tag_class = "hist-tag-single" if item.get("type") == "single_search" else "hist-tag-bulk"
+            tag_label = "🌐 Single Search" if item.get("type") == "single_search" else "⚡ Bulk Operation"
+            
+            with st.container():
+                st.markdown(f"""
+                <div class="hist-card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <div>
+                            <span class="hist-tag {tag_class}">{tag_label}</span>
+                            <span class="hist-card-title" style="margin-left:8px;">{item.get('query', 'Amazon Search')}</span>
+                            <span style="color:#64748b;font-size:12px;margin-left:6px;">({item.get('marketplace', 'amazon.com')})</span>
+                        </div>
+                        <span style="color:#94a3b8;font-size:12px;">🕒 {item.get('formatted_time', '')}</span>
+                    </div>
+                    <div style="display:flex;gap:12px;font-size:12px;color:#cbd5e1;">
+                        <span>🏷️ <b>{item.get('brand_count', 0)}</b> Brands</span>
+                        <span style="color:#34d399">🔥 <b>{item.get('under_100_count', 0)}</b> (&lt; 100 revs)</span>
+                        <span>👤 <b>{item.get('founders_count', 0)}</b> Founders</span>
+                        <span>🔗 <b>{item.get('linkedin_count', 0)}</b> LinkedIn</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                hc1, hc2, hc3, hc4, hc5 = st.columns([1.5, 1.2, 1.2, 1.5, 0.8])
+                with hc1:
+                    if st.button("👁️ Load into Table", key=f"btn_h_load_{item['id']}"):
+                        st.session_state.active_results = item.get("records", [])
+                        st.rerun()
+                with hc2:
+                    s_csv = export_to_csv_bytes(item.get("records", []))
+                    st.download_button("📄 CSV", data=s_csv, file_name=f"amazon_pl_{item['id']}.csv", mime="text/csv", key=f"btn_h_csv_{item['id']}", use_container_width=True)
+                with hc3:
+                    s_xlsx = export_to_excel_bytes(item.get("records", []))
+                    st.download_button("📊 Excel", data=s_xlsx, file_name=f"amazon_pl_{item['id']}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"btn_h_xlsx_{item['id']}", use_container_width=True)
+                with hc4:
+                    with st.expander(f"▾ Brand Preview ({item.get('brand_count', 0)})"):
+                        for r in (item.get("records", [])[:15]):
+                            rev = int(r.get("reviews") or 0)
+                            rev_str = f"🔥 {rev} revs" if rev < 100 else f"{rev} revs"
+                            founder = f" | 👤 {r.get('founder_name')}" if r.get('founder_name') and r.get('founder_name') != 'Not Found' else ""
+                            st.caption(f"• **{r.get('brand_name')}** ({rev_str}) — {r.get('matched_seller')}{founder}")
+                with hc5:
+                    if st.button("🗑️", key=f"btn_h_del_{item['id']}", title="Delete this session"):
+                        delete_history_session(item["id"])
+                        st.rerun()
+                
+                st.write("")
