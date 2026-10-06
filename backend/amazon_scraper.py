@@ -47,25 +47,34 @@ class AmazonExtractor:
             return f"{self.base_url}/s?k={encoded_k}&page={page}&ref=sr_pg_{page}"
 
     def fetch_page(self, url: str, max_retries: int = 4) -> Optional[BeautifulSoup]:
-        """Fetch URL using curl_cffi Chrome impersonation with clean browser headers."""
+        """Fetch URL using curl_cffi Chrome impersonation with rotating session-ids and jittered backoff."""
         impersonations = ["chrome124", "chrome120", "safari15_5", "chrome124"]
         for attempt in range(max_retries + 1):
             imp = impersonations[min(attempt, len(impersonations) - 1)]
             try:
+                # Rotate session-id on retry to bypass session-level throttling
+                req_cookies = dict(self.cookies)
+                req_cookies['session-id'] = generate_amazon_session_id()
+
                 resp = requests.get(
                     url,
                     headers=DEFAULT_HEADERS,
-                    cookies=self.cookies,
+                    cookies=req_cookies,
                     impersonate=imp,
                     timeout=15
                 )
-                if resp.status_code == 200 and "bm-verify" not in resp.text and "api-services-support" not in resp.text:
-                    return BeautifulSoup(resp.text, 'html.parser')
                 
-                # If challenged, backoff and retry
-                time.sleep(1.0 + attempt * 0.8)
+                # Check for valid HTML response free of captchas / bot verification walls
+                if resp.status_code == 200:
+                    text_sample = resp.text[:4000].lower()
+                    if not any(w in text_sample for w in ["bm-verify", "api-services-support", "validatecaptcha", "enter the characters"]):
+                        return BeautifulSoup(resp.text, 'html.parser')
+                
+                # If challenged, apply exponential backoff with jitter
+                backoff_wait = (1.2 * (1.8 ** attempt)) + random.uniform(0.3, 0.9)
+                time.sleep(backoff_wait)
             except Exception:
-                time.sleep(1.0)
+                time.sleep(1.0 + attempt * 0.8)
         return None
 
     def extract_search_asins(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
