@@ -257,43 +257,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# SAFETY LOGIN & ACCESS GATE
-# ==========================================
-DEFAULT_PASSWORDS = ["sellomize2026", "admin", "hunter2026"]
-CONFIG_PASSWORD = os.environ.get("APP_PASSWORD") or st.secrets.get("APP_PASSWORD", None)
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.markdown('<div class="main-header">🔒 Sellomize Amazon PL Hunter — Access Gate</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Please enter your access key to unlock the engine and protect cloud scraping resources.</div>', unsafe_allow_html=True)
-    
-    auth_col, _ = st.columns([1.5, 2])
-    with auth_col:
-        st.markdown("""
-        <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:20px;">
-            <p style="color:#94a3b8;font-size:12px;margin-bottom:10px;">Security Protection Active • Zero Backend Server Required</p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.write("")
-        pwd_attempt = st.text_input("Enter Access Password:", type="password", placeholder="Enter key (e.g. sellomize2026)", key="login_pwd")
-        
-        b1, b2 = st.columns([1, 1.2])
-        with b1:
-            if st.button("🔓 Unlock Engine", type="primary", use_container_width=True):
-                valid_passwords = DEFAULT_PASSWORDS + ([CONFIG_PASSWORD] if CONFIG_PASSWORD else [])
-                if pwd_attempt in valid_passwords:
-                    st.session_state.authenticated = True
-                    st.success("✅ Access granted! Unlocking system...")
-                    st.rerun()
-                else:
-                    st.error("❌ Incorrect password. Please try again.")
-        with b2:
-            st.caption("Default Key: `sellomize2026` (Configurable via Streamlit Secrets)")
-            
-    st.stop()
 
 # ==========================================
 # SESSION STATE INITIALIZATION
@@ -353,9 +316,6 @@ with st.sidebar:
 
         st.caption(f"Storage: **{len(load_saved_history())}** sessions saved")
 
-    if st.button("🔒 Log Out", use_container_width=True):
-        st.session_state.authenticated = False
-        st.rerun()
 
 # ==========================================
 # NAVIGATION TABS
