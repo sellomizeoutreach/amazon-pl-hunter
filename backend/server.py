@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from backend.amazon_scraper import AmazonExtractor
 from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
+from backend.brand_finder import find_brand_website_and_contacts
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 app = FastAPI(
@@ -207,23 +208,27 @@ def analyze_active_tab(req: ActiveTabScanRequest):
                 continue
 
             seen_brands.add(norm_b)
-            # Find decision maker
+            # Find decision maker and brand website contacts
             decision_maker = find_decision_maker(brand_name)
+            brand_contacts = find_brand_website_and_contacts(brand_name)
 
             record = {
                 "asin": asin,
                 "brand_name": brand_name,
+                "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
+                "reviews": prod_reviews,
+                "website": brand_contacts.get("website", "Not Found"),
+                "email": brand_contacts.get("email", "Not Found"),
+                "phone": brand_contacts.get("phone", "Not Found"),
                 "founder_name": decision_maker.get("founder_name", "Not Found"),
                 "linkedin_url": decision_maker.get("linkedin_url", "Not Found"),
                 "decision_maker_role": decision_maker.get("role_title", ""),
                 "pl_confidence": pl_eval.get("confidence", "High"),
-                "matched_seller": pl_eval.get("matched_seller", ""),
                 "seller_match_type": pl_eval.get("seller_match_type", ""),
                 "buybox_seller": details.get("buybox_seller", "None"),
                 "all_sellers_found": ", ".join(details.get("all_sellers", [])) or details.get("buybox_seller", ""),
                 "product_title": item.title or "",
                 "price": item.price or "",
-                "reviews": prod_reviews,
                 "product_url": item.product_url or f"{extractor.base_url}/dp/{asin}"
             }
             pl_records.append(record)

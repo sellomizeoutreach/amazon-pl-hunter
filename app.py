@@ -17,6 +17,7 @@ if ROOT_DIR not in sys.path:
 from backend.amazon_scraper import AmazonExtractor
 from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
+from backend.brand_finder import find_brand_website_and_contacts
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 # ==========================================
@@ -125,6 +126,9 @@ def save_session_to_history(entry):
         
         records = entry.get("records", [])
         under_100_count = sum(1 for r in records if int(r.get("reviews") or 0) < 100)
+        websites_count = sum(1 for r in records if r.get("website") and r.get("website").lower() != "not found")
+        emails_count = sum(1 for r in records if r.get("email") and r.get("email").lower() != "not found")
+        phones_count = sum(1 for r in records if r.get("phone") and r.get("phone").lower() != "not found")
         founders_count = sum(1 for r in records if r.get("founder_name") and r.get("founder_name").lower() != "not found")
         linkedin_count = sum(1 for r in records if r.get("linkedin_url") and r.get("linkedin_url").lower() != "not found")
         
@@ -138,6 +142,9 @@ def save_session_to_history(entry):
             "pages": entry.get("pages", 1),
             "brand_count": len(records),
             "under_100_count": under_100_count,
+            "websites_count": websites_count,
+            "emails_count": emails_count,
+            "phones_count": phones_count,
             "founders_count": founders_count,
             "linkedin_count": linkedin_count,
             "records": records
@@ -550,15 +557,19 @@ with tab_bulk:
                             return None
                         
                         decision_maker = find_decision_maker(b_name)
+                        brand_contacts = find_brand_website_and_contacts(b_name)
                         return {
                             "asin": asin,
                             "brand_name": b_name,
                             "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
-                            "buybox_seller": details.get("buybox_seller", ""),
                             "reviews": int(details.get("reviews") or 0),
+                            "website": brand_contacts.get("website", "Not Found"),
+                            "email": brand_contacts.get("email", "Not Found"),
+                            "phone": brand_contacts.get("phone", "Not Found"),
                             "founder_name": decision_maker.get("founder_name", "Not Found"),
                             "linkedin_url": decision_maker.get("linkedin_url", "Not Found"),
                             "decision_maker_role": decision_maker.get("role_title", ""),
+                            "buybox_seller": details.get("buybox_seller", ""),
                             "pl_confidence": pl_eval.get("confidence", "High"),
                             "product_url": f"{extractor.base_url}/dp/{asin}"
                         }
@@ -601,41 +612,58 @@ if st.session_state.active_results:
 
     total_brands = len(df_raw)
     under_100_total = int((df_raw["reviews"] < 100).sum())
+    websites_total = len(df_raw[df_raw["website"].str.lower() != "not found"]) if "website" in df_raw else 0
+    emails_total = len(df_raw[df_raw["email"].str.lower() != "not found"]) if "email" in df_raw else 0
+    phones_total = len(df_raw[df_raw["phone"].str.lower() != "not found"]) if "phone" in df_raw else 0
     founders_total = len(df_raw[df_raw["founder_name"].str.lower() != "not found"]) if "founder_name" in df_raw else 0
-    linkedin_total = len(df_raw[df_raw["linkedin_url"].str.lower() != "not found"]) if "linkedin_url" in df_raw else 0
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1:
         st.markdown(f'<div class="metric-card"><div class="metric-val">{total_brands}</div><div class="metric-lbl">Total PL Brands</div></div>', unsafe_allow_html=True)
     with m2:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {under_100_total}</div><div class="metric-lbl">&lt; 100 Reviews ({int(under_100_total/total_brands*100) if total_brands else 0}%)</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {under_100_total}</div><div class="metric-lbl">&lt; 100 Reviews</div></div>', unsafe_allow_html=True)
     with m3:
-        st.markdown(f'<div class="metric-card"><div class="metric-val">{founders_total}</div><div class="metric-lbl">Founders Found</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#38bdf8">🌐 {websites_total}</div><div class="metric-lbl">Brand Websites</div></div>', unsafe_allow_html=True)
     with m4:
-        st.markdown(f'<div class="metric-card"><div class="metric-val">{linkedin_total}</div><div class="metric-lbl">LinkedIn Profiles</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#fbbf24">✉️ {emails_total}</div><div class="metric-lbl">Public Emails</div></div>', unsafe_allow_html=True)
+    with m5:
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#a78bfa">📞 {phones_total}</div><div class="metric-lbl">Phone Numbers</div></div>', unsafe_allow_html=True)
+    with m6:
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{founders_total}</div><div class="metric-lbl">Founders Found</div></div>', unsafe_allow_html=True)
 
     st.write("")
     
     st.subheader("🎛️ Results Filter & Search")
-    f_c1, f_c2, f_c3 = st.columns([2, 1.5, 2.5])
+    f_c1, f_c2, f_c3 = st.columns([2.5, 1.2, 2.3])
     with f_c1:
         filter_mode = st.radio(
             "Quick Filter:",
-            options=["All Brands", f"🔥 Less than 100 Reviews ({under_100_total})", "👤 Founder Found Only", "🔗 LinkedIn Profile Found"],
+            options=[
+                "All Brands",
+                f"🔥 Less than 100 Reviews ({under_100_total})",
+                f"🌐 Website Found ({websites_total})",
+                f"✉️ Email Found ({emails_total})",
+                f"📞 Phone Found ({phones_total})",
+                f"👤 Founder Found Only ({founders_total})"
+            ],
             horizontal=True
         )
     with f_c2:
         max_rev_cap = st.number_input("Max Reviews Cap (0 = Unlimited):", min_value=0, max_value=50000, value=0, step=50)
     with f_c3:
-        text_search = st.text_input("🔍 Live Search (Brand, Seller, ASIN, Founder):", placeholder="Type keyword to filter...")
+        text_search = st.text_input("🔍 Live Search (Brand, Seller, Website, Email, Phone):", placeholder="Type keyword to filter...")
 
     df_filtered = df_raw.copy()
     if "Less than 100 Reviews" in filter_mode:
         df_filtered = df_filtered[df_filtered["reviews"] < 100]
+    elif "Website Found" in filter_mode:
+        df_filtered = df_filtered[df_filtered["website"].str.lower() != "not found"]
+    elif "Email Found" in filter_mode:
+        df_filtered = df_filtered[df_filtered["email"].str.lower() != "not found"]
+    elif "Phone Found" in filter_mode:
+        df_filtered = df_filtered[df_filtered["phone"].str.lower() != "not found"]
     elif "Founder Found Only" in filter_mode:
         df_filtered = df_filtered[df_filtered["founder_name"].str.lower() != "not found"]
-    elif "LinkedIn Profile Found" in filter_mode:
-        df_filtered = df_filtered[df_filtered["linkedin_url"].str.lower() != "not found"]
 
     if max_rev_cap > 0:
         df_filtered = df_filtered[df_filtered["reviews"] <= max_rev_cap]
@@ -645,6 +673,9 @@ if st.session_state.active_results:
         df_filtered = df_filtered[
             df_filtered["brand_name"].str.lower().str.contains(q_l, na=False) |
             df_filtered["matched_seller"].str.lower().str.contains(q_l, na=False) |
+            (df_filtered["website"].str.lower().str.contains(q_l, na=False) if "website" in df_filtered else False) |
+            (df_filtered["email"].str.lower().str.contains(q_l, na=False) if "email" in df_filtered else False) |
+            (df_filtered["phone"].str.lower().str.contains(q_l, na=False) if "phone" in df_filtered else False) |
             df_filtered["founder_name"].str.lower().str.contains(q_l, na=False) |
             df_filtered["asin"].str.lower().str.contains(q_l, na=False)
         ]
@@ -673,7 +704,21 @@ if st.session_state.active_results:
     with exp_info:
         st.caption(f"Showing **{len(df_filtered)}** of **{total_brands}** total extracted brands. Export contains currently filtered rows.")
 
-    cols_order = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence", "price", "product_title", "product_url"]
+    cols_order = [
+        "asin",
+        "brand_name",
+        "matched_seller",
+        "reviews",
+        "website",
+        "email",
+        "phone",
+        "founder_name",
+        "linkedin_url",
+        "pl_confidence",
+        "price",
+        "product_title",
+        "product_url"
+    ]
     display_cols = [c for c in cols_order if c in df_filtered.columns]
 
     st.dataframe(
@@ -683,6 +728,9 @@ if st.session_state.active_results:
             "brand_name": st.column_config.TextColumn("Brand Name"),
             "matched_seller": st.column_config.TextColumn("PL Seller"),
             "reviews": st.column_config.NumberColumn("Reviews", format="%d ⭐"),
+            "website": st.column_config.LinkColumn("Brand Website"),
+            "email": st.column_config.TextColumn("Public Email"),
+            "phone": st.column_config.TextColumn("Phone Number"),
             "founder_name": st.column_config.TextColumn("Founder / Decision Maker"),
             "linkedin_url": st.column_config.LinkColumn("LinkedIn Profile"),
             "pl_confidence": st.column_config.TextColumn("PL Status"),
@@ -712,17 +760,22 @@ with tab_history:
                 all_history_records.append(r)
 
     hist_under_100 = sum(1 for r in all_history_records if int(r.get("reviews") or 0) < 100)
+    hist_websites = sum(1 for r in all_history_records if r.get("website") and r.get("website").lower() != "not found")
+    hist_emails = sum(1 for r in all_history_records if r.get("email") and r.get("email").lower() != "not found")
+    hist_phones = sum(1 for r in all_history_records if r.get("phone") and r.get("phone").lower() != "not found")
     hist_founders = sum(1 for r in all_history_records if r.get("founder_name") and r.get("founder_name").lower() != "not found")
 
-    h_m1, h_m2, h_m3, h_m4 = st.columns(4)
+    h_m1, h_m2, h_m3, h_m4, h_m5 = st.columns(5)
     with h_m1:
         st.markdown(f'<div class="metric-card"><div class="metric-val">{total_saved_sessions}</div><div class="metric-lbl">Saved Searches</div></div>', unsafe_allow_html=True)
     with h_m2:
-        st.markdown(f'<div class="metric-card"><div class="metric-val">{len(all_history_records)}</div><div class="metric-lbl">Unique Brands Saved</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{len(all_history_records)}</div><div class="metric-lbl">Unique Brands</div></div>', unsafe_allow_html=True)
     with h_m3:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {hist_under_100}</div><div class="metric-lbl">&lt; 100 Review Brands</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {hist_under_100}</div><div class="metric-lbl">&lt; 100 Revs</div></div>', unsafe_allow_html=True)
     with h_m4:
-        st.markdown(f'<div class="metric-card"><div class="metric-val">{hist_founders}</div><div class="metric-lbl">Founders Identified</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#38bdf8">🌐 {hist_websites} | ✉️ {hist_emails}</div><div class="metric-lbl">Websites & Emails</div></div>', unsafe_allow_html=True)
+    with h_m5:
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{hist_founders}</div><div class="metric-lbl">Founders Found</div></div>', unsafe_allow_html=True)
 
     st.write("")
     
@@ -815,9 +868,12 @@ with tab_history:
                         </div>
                         <span style="color:#94a3b8;font-size:12px;">🕒 {item.get('formatted_time', '')}</span>
                     </div>
-                    <div style="display:flex;gap:12px;font-size:12px;color:#cbd5e1;">
+                    <div style="display:flex;gap:12px;font-size:12px;color:#cbd5e1;flex-wrap:wrap;">
                         <span>🏷️ <b>{item.get('brand_count', 0)}</b> Brands</span>
                         <span style="color:#34d399">🔥 <b>{item.get('under_100_count', 0)}</b> (&lt; 100 revs)</span>
+                        <span style="color:#38bdf8">🌐 <b>{item.get('websites_count', 0)}</b> Web</span>
+                        <span style="color:#fbbf24">✉️ <b>{item.get('emails_count', 0)}</b> Email</span>
+                        <span style="color:#a78bfa">📞 <b>{item.get('phones_count', 0)}</b> Phone</span>
                         <span>👤 <b>{item.get('founders_count', 0)}</b> Founders</span>
                         <span>🔗 <b>{item.get('linkedin_count', 0)}</b> LinkedIn</span>
                     </div>
@@ -840,8 +896,11 @@ with tab_history:
                         for r in (item.get("records", [])[:15]):
                             rev = int(r.get("reviews") or 0)
                             rev_str = f"🔥 {rev} revs" if rev < 100 else f"{rev} revs"
+                            web = f" | 🌐 {r.get('website')}" if r.get('website') and r.get('website') != 'Not Found' else ""
+                            em = f" | ✉️ {r.get('email')}" if r.get('email') and r.get('email') != 'Not Found' else ""
+                            ph = f" | 📞 {r.get('phone')}" if r.get('phone') and r.get('phone') != 'Not Found' else ""
                             founder = f" | 👤 {r.get('founder_name')}" if r.get('founder_name') and r.get('founder_name') != 'Not Found' else ""
-                            st.caption(f"• **{r.get('brand_name')}** ({rev_str}) — {r.get('matched_seller')}{founder}")
+                            st.caption(f"• **{r.get('brand_name')}** ({rev_str}) — {r.get('matched_seller')}{web}{em}{ph}{founder}")
                 with hc5:
                     if st.button("🗑️", key=f"btn_h_del_{item['id']}", title="Delete this session"):
                         delete_history_session(item["id"])

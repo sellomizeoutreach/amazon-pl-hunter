@@ -503,7 +503,7 @@ function renderResults(records, isRunning = false) {
 
     resultsTbody.innerHTML = `
       <tr class="empty-row">
-        <td colspan="7">${emptyMsg}</td>
+        <td colspan="10">${emptyMsg}</td>
       </tr>
     `;
     btnExportCsv.disabled = allRecords.length === 0;
@@ -518,6 +518,9 @@ function renderResults(records, isRunning = false) {
   displayRecords.forEach((r) => {
     const hasFounder = r.founder_name && r.founder_name !== "Not Found";
     const hasLinkedin = r.linkedin_url && r.linkedin_url !== "Not Found";
+    const hasWebsite = r.website && r.website !== "Not Found";
+    const hasEmail = r.email && r.email !== "Not Found";
+    const hasPhone = r.phone && r.phone !== "Not Found";
 
     if (hasFounder) foundersFound++;
     if (hasLinkedin) linkedinFound++;
@@ -525,6 +528,18 @@ function renderResults(records, isRunning = false) {
     const linkedinBadge = hasLinkedin
       ? `<a href="${r.linkedin_url}" target="_blank" class="linkedin-link">🔗 Profile</a>`
       : `<span style="color:#94a3b8">Not Found</span>`;
+
+    const websiteBadge = hasWebsite
+      ? `<a href="${r.website}" target="_blank" style="color:#38bdf8;text-decoration:none;font-weight:600;" title="${r.website}">🌐 Visit</a>`
+      : `<span style="color:#64748b">-</span>`;
+
+    const emailBadge = hasEmail
+      ? `<a href="mailto:${r.email}" style="color:#fbbf24;text-decoration:none;" title="${r.email}">✉️ ${escapeHtml(r.email)}</a>`
+      : `<span style="color:#64748b">-</span>`;
+
+    const phoneBadge = hasPhone
+      ? `<span style="color:#a78bfa;" title="${r.phone}">📞 ${escapeHtml(r.phone)}</span>`
+      : `<span style="color:#64748b">-</span>`;
 
     const confClass = (r.pl_confidence || "").toLowerCase() === "high" ? "high" : "medium";
 
@@ -546,6 +561,9 @@ function renderResults(records, isRunning = false) {
           <span style="color:#fbbf24;font-weight:600">${escapeHtml(r.matched_seller || r.buybox_seller || "Single Seller")}</span>
         </td>
         <td>${revBadge}</td>
+        <td>${websiteBadge}</td>
+        <td>${emailBadge}</td>
+        <td>${phoneBadge}</td>
         <td>${escapeHtml(r.founder_name || "Not Found")}</td>
         <td>${linkedinBadge}</td>
         <td><span class="badge ${confClass}">${r.pl_confidence || "PL"}</span></td>
@@ -562,7 +580,7 @@ function clearResultsTable() {
   extractedRecords = [];
   resultsTbody.innerHTML = `
     <tr class="empty-row">
-      <td colspan="7">Hunting for Private Label brands...</td>
+      <td colspan="10">Hunting for Private Label brands...</td>
     </tr>
   `;
   statPlCount.innerText = "0";
@@ -679,6 +697,9 @@ function saveSearchToHistory(entry) {
       records: entry.records,
       brandCount: entry.records.length,
       under100Count: entry.records.filter(r => parseReviewCount(r.reviews) < 100).length,
+      websiteCount: entry.records.filter(r => r.website && r.website !== "Not Found").length,
+      emailCount: entry.records.filter(r => r.email && r.email !== "Not Found").length,
+      phoneCount: entry.records.filter(r => r.phone && r.phone !== "Not Found").length,
       founderCount: entry.records.filter(r => r.founder_name && r.founder_name !== "Not Found").length,
       linkedinCount: entry.records.filter(r => r.linkedin_url && r.linkedin_url !== "Not Found").length
     };
@@ -780,6 +801,8 @@ function renderHistoryList(history, filterText = "") {
           <span style="font-size:9px;color:${revColor};font-weight:600">🔥 ${revs} revs</span>
           <span class="hist-seller-name" title="Seller: ${escapeHtml(r.matched_seller || r.buybox_seller || '')}">${escapeHtml(r.matched_seller || r.buybox_seller || 'PL Seller')}</span>
           ${founderText}
+          ${r.website && r.website !== 'Not Found' ? `<span style="font-size:9px;color:#38bdf8;">🌐 Web</span>` : ''}
+          ${r.email && r.email !== 'Not Found' ? `<span style="font-size:9px;color:#fbbf24;">✉️ Email</span>` : ''}
         </div>
       `;
     });
@@ -788,6 +811,8 @@ function renderHistoryList(history, filterText = "") {
     }
 
     const under100N = item.under100Count !== undefined ? item.under100Count : (item.records || []).filter(r => parseReviewCount(r.reviews) < 100).length;
+    const webCount = item.websiteCount !== undefined ? item.websiteCount : (item.records || []).filter(r => r.website && r.website !== 'Not Found').length;
+    const emailCount = item.emailCount !== undefined ? item.emailCount : (item.records || []).filter(r => r.email && r.email !== 'Not Found').length;
 
     html += `
       <div class="history-item-card" data-id="${item.id}">
@@ -803,6 +828,8 @@ function renderHistoryList(history, filterText = "") {
         <div class="hist-card-stats">
           <span class="hist-stat-chip">🏷️ <b>${item.brandCount || 0}</b> PL Brands</span>
           <span class="hist-stat-chip" style="color:#34d399">🔥 <b>${under100N}</b> (&lt;100 revs)</span>
+          <span class="hist-stat-chip" style="color:#38bdf8">🌐 <b>${webCount}</b> Web</span>
+          <span class="hist-stat-chip" style="color:#fbbf24">✉️ <b>${emailCount}</b> Email</span>
           <span class="hist-stat-chip">👤 <b>${item.founderCount || 0}</b> Founders</span>
           <span class="hist-stat-chip">🔗 <b>${item.linkedinCount || 0}</b> LinkedIn</span>
           ${item.pages ? `<span class="hist-stat-chip">📄 <b>${item.pages}</b> Pages</span>` : ''}
