@@ -344,7 +344,7 @@ with tab_bulk:
                 height=130
             )
         with b_col_opt:
-            bulk_kw_pages = st.slider("Pages per Keyword:", min_value=1, max_value=5, value=2)
+            bulk_kw_pages = st.slider("Pages per Keyword:", min_value=1, max_value=10, value=3)
             bulk_kw_filter_100 = st.checkbox("🔥 Only Extract < 100 Review Brands", value=False)
             btn_start_bulk_kw = st.button("🚀 Start Bulk Keyword Hunt", type="primary", use_container_width=True, disabled=st.session_state.is_running)
 

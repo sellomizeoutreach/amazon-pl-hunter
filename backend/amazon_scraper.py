@@ -119,6 +119,14 @@ class AmazonExtractor:
                             except Exception:
                                 pass
 
+            # Card brand if displayed
+            card_brand = ""
+            brand_node = item.select_one('span.a-size-base-plus.a-color-base, [data-cy="title-recipe"] h2 ~ span, .s-line-clamp-1 span')
+            if brand_node:
+                b_cand = brand_node.get_text(strip=True)
+                if len(b_cand) >= 2 and len(b_cand) < 40 and not any(w in b_cand.lower() for w in ['pack', 'count', 'ounce', 'star', 'rating', 'review', 'save', 'prime', 'choice', 'sponsored']):
+                    card_brand = b_cand
+
             # Product URL
             link_node = item.select_one('h2 a[href]')
             rel_url = link_node.get('href', '') if link_node else f"/dp/{asin}"
@@ -133,6 +141,7 @@ class AmazonExtractor:
                 "price": price,
                 "rating": rating,
                 "reviews": reviews,
+                "brand": card_brand,
                 "product_url": product_url
             })
             
@@ -323,13 +332,25 @@ class AmazonExtractor:
             else:
                 current_page_url = self.build_search_url(query, page + 1)
 
-            # Filter out products already scanned by ASIN in this search run
+            # Filter out products already scanned by ASIN, megabrands, or already extracted brands
             unseen_products = []
             for p in products:
                 asin = p.get("asin")
-                if asin and asin not in seen_asins:
-                    seen_asins.add(asin)
-                    unseen_products.append(p)
+                if not asin or asin in seen_asins:
+                    continue
+                seen_asins.add(asin)
+
+                # Skip if already over max_reviews limit
+                if max_reviews is not None and p.get("reviews", 0) >= max_reviews:
+                    continue
+
+                # Skip if known megabrand or brand already extracted
+                c_brand = (p.get("brand") or "").lower().strip()
+                if c_brand:
+                    if c_brand in self.seen_brands or is_megabrand_or_corporate(c_brand):
+                        continue
+
+                unseen_products.append(p)
 
             # Analyze products concurrently in small fast batches (4 workers)
             with ThreadPoolExecutor(max_workers=4) as executor:
