@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Amazon PL & LinkedIn Extractor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand-title">
+        <span class="logo-icon">📦</span>
+        <h1>Amazon PL <span>Hunter</span></h1>
+      </div>
+      <div id="backend-status" class="status-badge checking">
+        <span class="dot"></span>
+        <span class="status-text">Checking backend...</span>
+      </div>
+    </header>
+
+    <!-- Backend Warning if disconnected -->
+    <div id="backend-warning" class="warning-banner hidden">
+      <div class="warning-text">
+        ⚠️ Python backend is not running at <code>127.0.0.1:8000</code>.
+        <br>Double-click <b><code>start_backend.bat</code></b> in <code>c:\Antigravet\Extract Exten</code>.
+      </div>
+      <button id="btn-retry-backend" class="retry-btn">🔄 Check Connection</button>
+    </div>
+
+    <!-- Mode Navigation Tabs -->
+    <div class="tabs-nav">
+      <button id="tab-btn-crawl" class="tab-btn active">🌐 Deep Search</button>
+      <button id="tab-btn-active" class="tab-btn">⚡ Active Tab</button>
+      <button id="tab-btn-history" class="tab-btn">
+        📜 History <span id="history-badge" class="history-badge hidden">0</span>
+      </button>
+    </div>
+
+    <!-- Tab 1: Deep Search -->
+    <div id="tab-crawl" class="tab-content active">
+      <div class="form-group">
+        <label for="search-query">Search Keyword or Amazon Category URL:</label>
+        <input type="text" id="search-query" placeholder="e.g. wireless earbuds, beauty, posture corrector" />
+      </div>
+
+      <div class="form-row">
+        <div class="form-group half">
+          <label for="marketplace">Marketplace:</label>
+          <select id="marketplace">
+            <option value="amazon.com" selected>amazon.com (US)</option>
+            <option value="amazon.co.uk">amazon.co.uk (UK)</option>
+            <option value="amazon.de">amazon.de (Germany)</option>
+            <option value="amazon.ca">amazon.ca (Canada)</option>
+            <option value="amazon.fr">amazon.fr (France)</option>
+            <option value="amazon.it">amazon.it (Italy)</option>
+            <option value="amazon.es">amazon.es (Spain)</option>
+          </select>
+        </div>
+
+        <div class="form-group half">
+          <label for="page-count">Pages to Crawl (1-10): <b id="page-val">3</b></label>
+          <input type="range" id="page-count" min="1" max="10" value="3" />
+        </div>
+      </div>
+
+      <div class="form-row filter-row">
+        <label class="checkbox-container" for="filter-under-100-crawl">
+          <input type="checkbox" id="filter-under-100-crawl" />
+          <span class="checkbox-text">🔥 Only extract brands with <b>&lt; 100 reviews</b> (Low Competition PL)</span>
+        </label>
+      </div>
+
+      <div class="crawl-btn-row">
+        <button id="btn-start-crawl" class="primary-btn" disabled>
+          <span class="btn-icon">🚀</span> Start PL Extraction
+        </button>
+      </div>
+    </div>
+
+    <!-- Tab 2: Active Tab -->
+    <div id="tab-active" class="tab-content">
+      <p class="tab-info">
+        Quickly scans the products on your currently open Amazon search or category tab, checks all sellers for PL ownership, and finds their founders on LinkedIn.
+      </p>
+      <button id="btn-scan-tab" class="primary-btn secondary-style">
+        <span class="btn-icon">⚡</span> Extract from Active Tab
+      </button>
+    </div>
+
+    <!-- Tab 3: History (Persistent until cleared) -->
+    <div id="tab-history" class="tab-content">
+      <div class="history-header">
+        <div class="history-stats-bar">
+          <div class="hist-stat-item">
+            <span class="hist-num" id="hist-stat-searches">0</span>
+            <span class="hist-lbl">Searches</span>
+          </div>
+          <div class="hist-stat-item">
+            <span class="hist-num" id="hist-stat-brands">0</span>
+            <span class="hist-lbl">Total Brands</span>
+          </div>
+          <div class="hist-stat-item">
+            <span class="hist-num" id="hist-stat-founders">0</span>
+            <span class="hist-lbl">Founders</span>
+          </div>
+        </div>
+
+        <div class="hist-actions-bar">
+          <button id="btn-hist-load-all" class="hist-tool-btn" title="Combine and load all historical brands into results table">
+            👁️ Load All
+          </button>
+          <button id="btn-hist-export-csv" class="hist-tool-btn" title="Export all historical brands to CSV">
+            📄 CSV All
+          </button>
+          <button id="btn-hist-export-excel" class="hist-tool-btn excel-style" title="Export all historical brands to Excel">
+            📊 Excel All
+          </button>
+          <button id="btn-hist-clear-all" class="hist-tool-btn danger" title="Clear all stored search history">
+            🗑️ Clear History
+          </button>
+        </div>
+
+        <div class="hist-search-box">
+          <input type="text" id="history-filter-input" placeholder="🔍 Search saved brands, sellers, or keywords..." />
+        </div>
+      </div>
+
+      <div id="history-list" class="history-list">
+        <div class="history-empty">
+          No search history saved yet.<br>All completed searches will be automatically stored here until cleared!
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Progress Bar, Metrics & Activity Log -->
+    <div id="progress-container" class="progress-box hidden">
+      <div class="progress-header">
+        <div class="progress-meta-badges">
+          <span class="badge-page-indicator" id="badge-page-track">Page 1 of 3</span>
+          <span class="badge-scanned-indicator" id="badge-scanned-track">0 Scanned</span>
+        </div>
+        <div class="progress-header-right">
+          <span id="progress-percent">0%</span>
+          <button id="btn-stop-crawl" class="stop-btn" title="Stop Search Now">
+            ⏹️ Stop
+          </button>
+        </div>
+      </div>
+      <div class="progress-bar-bg">
+        <div id="progress-bar-fill" class="progress-bar-fill"></div>
+      </div>
+      <div id="progress-message" class="progress-msg">Initializing crawler...</div>
+
+      <!-- Live Search Activity Log Box -->
+      <div class="activity-log-wrapper">
+        <div class="activity-log-title" id="toggle-log-btn">
+          <span>📋 Live Activity Feed</span>
+          <span id="log-count-indicator">0 events</span>
+        </div>
+        <div id="live-activity-log" class="activity-log-list">
+          <div class="log-line">Waiting for search to begin...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics Bar -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-val" id="stat-pl-count">0</div>
+        <div class="stat-label">PL Brands</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stat-founder-count">0</div>
+        <div class="stat-label">Founders Found</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stat-linkedin-count">0</div>
+        <div class="stat-label">LinkedIn Profiles</div>
+      </div>
+    </div>
+
+    <!-- Action Toolbar (Filters & Export Buttons) -->
+    <div class="action-bar">
+      <div class="action-bar-left">
+        <span class="section-title">Extracted Brands (<span id="results-count">0</span>)</span>
+        <button id="btn-filter-under-100" class="filter-toggle-btn" title="Toggle: Show only brands with less than 100 reviews">
+          🔥 &lt; 100 Reviews <span id="under-100-badge" class="filter-count-badge">0</span>
+        </button>
+      </div>
+      <div class="export-btns">
+        <button id="btn-export-csv" class="export-btn" disabled title="Export as CSV">
+          📄 CSV
+        </button>
+        <button id="btn-export-excel" class="export-btn excel-style" disabled title="Export as Excel">
+          📊 Excel
+        </button>
+      </div>
+    </div>
+
+    <!-- Results Table Container -->
+    <div class="table-scroll-container">
+      <table class="results-table" id="results-table">
+        <thead>
+          <tr>
+            <th>ASIN</th>
+            <th>Brand Name</th>
+            <th>PL Seller</th>
+            <th>Reviews</th>
+            <th>Founder / Decision Maker</th>
+            <th>LinkedIn Profile</th>
+            <th>PL Status</th>
+          </tr>
+        </thead>
+        <tbody id="results-tbody">
+          <tr class="empty-row">
+            <td colspan="7">No brands extracted yet. Enter a keyword or click Extract to start!</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>Auto-deduplicates repeated brands & verifies multi-seller listings.</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

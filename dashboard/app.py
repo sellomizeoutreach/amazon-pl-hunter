@@ -5,10 +5,8 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-# Ensure root directory is in sys.path
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+# Add parent directory to path so backend modules can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from backend.amazon_scraper import AmazonExtractor
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
