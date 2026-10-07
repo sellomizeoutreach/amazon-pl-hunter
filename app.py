@@ -902,7 +902,7 @@ with tab_history:
                             founder = f" | 👤 {r.get('founder_name')}" if r.get('founder_name') and r.get('founder_name') != 'Not Found' else ""
                             st.caption(f"• **{r.get('brand_name')}** ({rev_str}) — {r.get('matched_seller')}{web}{em}{ph}{founder}")
                 with hc5:
-                    if st.button("🗑️", key=f"btn_h_del_{item['id']}", title="Delete this session"):
+                    if st.button("🗑️", key=f"btn_h_del_{item['id']}", help="Delete this session"):
                         delete_history_session(item["id"])
                         st.rerun()
                 
