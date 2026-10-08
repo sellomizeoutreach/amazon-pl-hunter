@@ -77,6 +77,17 @@
         </select>
       </div>
 
+      <div class="form-group">
+        <label for="exclude-country-filter">🚫 Exclude Sellers From (Do Not Search):</label>
+        <select id="exclude-country-filter">
+          <option value="" selected>None (Search All)</option>
+          <option value="CN,HK">🚫 Exclude China & HK (CN / HK)</option>
+          <option value="US">🚫 Exclude United States (US)</option>
+          <option value="GB,DE,FR,IT,ES">🚫 Exclude UK & Europe</option>
+          <option value="UNKNOWN">🚫 Exclude Unknown Address</option>
+        </select>
+      </div>
+
       <div class="form-row filter-row">
         <label class="checkbox-container" for="filter-under-100-crawl">
           <input type="checkbox" id="filter-under-100-crawl" />
@@ -96,7 +107,7 @@
       <p class="tab-info">
         Quickly scans the products on your currently open Amazon search or category tab, checks all sellers for PL ownership, and finds their founders on LinkedIn.
       </p>
-      <div class="form-group" style="margin-bottom:12px;">
+      <div class="form-group" style="margin-bottom:8px;">
         <label for="active-region-filter">Filter Seller Region:</label>
         <select id="active-region-filter">
           <option value="ALL" selected>🌍 All Seller Regions</option>
@@ -105,6 +116,16 @@
           <option value="CN">🇨🇳 China & Hong Kong (CN / HK)</option>
           <option value="UK_EU">🇬🇧 UK & Europe (GB, DE, FR, IT, ES)</option>
           <option value="CA">🇨🇦 Canada (CA Only)</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="active-exclude-country-filter">🚫 Exclude Sellers From:</label>
+        <select id="active-exclude-country-filter">
+          <option value="" selected>None (Search All)</option>
+          <option value="CN,HK">🚫 Exclude China & HK (CN / HK)</option>
+          <option value="US">🚫 Exclude United States (US)</option>
+          <option value="GB,DE,FR,IT,ES">🚫 Exclude UK & Europe</option>
+          <option value="UNKNOWN">🚫 Exclude Unknown Address</option>
         </select>
       </div>
       <button id="btn-scan-tab" class="primary-btn secondary-style">
@@ -216,6 +237,9 @@
         </button>
         <button id="btn-filter-non-cn" class="filter-toggle-btn" title="Toggle: Show Non-China Western sellers">
           🛡️ Non-CN <span id="non-cn-badge" class="filter-count-badge">0</span>
+        </button>
+        <button id="btn-filter-exclude-cn" class="filter-toggle-btn" title="Toggle: Exclude sellers registered in China & HK">
+          🚫 Exclude CN/HK
         </button>
       </div>
       <div class="export-btns">

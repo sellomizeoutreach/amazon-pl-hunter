@@ -62,6 +62,8 @@ const btnExportExcel = document.getElementById("btn-export-excel");
 // Review & Region Filter Elements
 const regionFilter = document.getElementById("region-filter");
 const activeRegionFilter = document.getElementById("active-region-filter");
+const excludeCountryFilter = document.getElementById("exclude-country-filter");
+const activeExcludeCountryFilter = document.getElementById("active-exclude-country-filter");
 const filterUnder100Crawl = document.getElementById("filter-under-100-crawl");
 const btnFilterUnder100 = document.getElementById("btn-filter-under-100");
 const under100Badge = document.getElementById("under-100-badge");
@@ -69,10 +71,12 @@ const btnFilterUs = document.getElementById("btn-filter-us");
 const usBadge = document.getElementById("us-badge");
 const btnFilterNonCn = document.getElementById("btn-filter-non-cn");
 const nonCnBadge = document.getElementById("non-cn-badge");
+const btnFilterExcludeCn = document.getElementById("btn-filter-exclude-cn");
 
 let filterUnder100Active = false;
 let filterUsActive = false;
 let filterNonCnActive = false;
+let filterExcludeCnActive = false;
 
 function parseReviewCount(val) {
   if (val === undefined || val === null) return 0;
@@ -180,6 +184,14 @@ function setupEventListeners() {
     });
   }
 
+  if (btnFilterExcludeCn) {
+    btnFilterExcludeCn.addEventListener("click", () => {
+      filterExcludeCnActive = !filterExcludeCnActive;
+      btnFilterExcludeCn.classList.toggle("active", filterExcludeCnActive);
+      renderResults(extractedRecords);
+    });
+  }
+
   // History global actions
   if (btnHistLoadAll) btnHistLoadAll.addEventListener("click", loadAllHistoryIntoTable);
   if (btnHistExportCsv) btnHistExportCsv.addEventListener("click", () => exportAllHistory("csv"));
@@ -273,6 +285,8 @@ async function startDeepCrawl() {
   clearResultsTable();
 
   const regionVal = regionFilter ? regionFilter.value : "ALL";
+  const excludeVal = excludeCountryFilter ? excludeCountryFilter.value : "";
+  const excludeList = excludeVal ? excludeVal.split(",").map(x => x.trim()).filter(Boolean) : [];
 
   try {
     const response = await fetch(`${BACKEND_URL}/api/extract`, {
@@ -283,7 +297,8 @@ async function startDeepCrawl() {
         marketplace: marketplace,
         max_pages: maxPages,
         max_reviews: maxReviews,
-        region_filter: regionVal
+        region_filter: regionVal,
+        exclude_countries: excludeList
       })
     });
 
@@ -469,6 +484,8 @@ async function processActiveTabData(data) {
   }
 
   const activeRegionVal = activeRegionFilter ? activeRegionFilter.value : "ALL";
+  const activeExcludeVal = activeExcludeCountryFilter ? activeExcludeCountryFilter.value : "";
+  const activeExcludeList = activeExcludeVal ? activeExcludeVal.split(",").map(x => x.trim()).filter(Boolean) : [];
 
   try {
     const res = await fetch(`${BACKEND_URL}/api/analyze-active-tab`, {
@@ -478,7 +495,8 @@ async function processActiveTabData(data) {
         products: data.products,
         marketplace: data.marketplace || "amazon.com",
         max_reviews: maxReviews,
-        region_filter: activeRegionVal
+        region_filter: activeRegionVal,
+        exclude_countries: activeExcludeList
       })
     });
 
@@ -532,7 +550,11 @@ function renderResults(records, isRunning = false) {
     displayRecords = displayRecords.filter(r => !['CN', 'HK', 'UNKNOWN', ''].includes((r.seller_country || '').toUpperCase()));
   }
 
-  const isFiltered = filterUnder100Active || filterUsActive || filterNonCnActive;
+  if (filterExcludeCnActive) {
+    displayRecords = displayRecords.filter(r => !['CN', 'HK'].includes((r.seller_country || '').toUpperCase()));
+  }
+
+  const isFiltered = filterUnder100Active || filterUsActive || filterNonCnActive || filterExcludeCnActive;
   resultsCount.innerText = isFiltered
     ? `${displayRecords.length} of ${allRecords.length}`
     : `${allRecords.length}`;
@@ -646,6 +668,8 @@ function clearResultsTable() {
   if (under100Badge) under100Badge.innerText = "0";
   if (usBadge) usBadge.innerText = "0";
   if (nonCnBadge) nonCnBadge.innerText = "0";
+  filterExcludeCnActive = false;
+  if (btnFilterExcludeCn) btnFilterExcludeCn.classList.remove("active");
   btnExportCsv.disabled = true;
   btnExportExcel.disabled = true;
 }

@@ -9,7 +9,7 @@ from backend.amazon_scraper import AmazonExtractor
 from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
-from backend.seller_checker import matches_region_filter
+from backend.seller_checker import matches_region_filter, is_seller_allowed
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 app = FastAPI(
@@ -35,6 +35,7 @@ class ExtractRequest(BaseModel):
     max_pages: int = Field(default=3, ge=1, le=10, description="Number of pages to crawl (1 to 10)")
     max_reviews: Optional[int] = Field(default=None, description="Optional maximum review count limit, e.g. 100")
     region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
+    exclude_countries: Optional[Any] = Field(default=None, description="Optional list or comma-separated string of countries to exclude, e.g. ['CN', 'HK']")
 
 class DirectProductScanItem(BaseModel):
     asin: str
@@ -49,8 +50,9 @@ class ActiveTabScanRequest(BaseModel):
     marketplace: Optional[str] = "amazon.com"
     max_reviews: Optional[int] = Field(default=None, description="Optional maximum review count limit, e.g. 100")
     region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
+    exclude_countries: Optional[Any] = Field(default=None, description="Optional countries to exclude, e.g. ['CN', 'HK']")
 
-def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages: int, max_reviews: Optional[int] = None, region_filter: Optional[str] = None):
+def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages: int, max_reviews: Optional[int] = None, region_filter: Optional[str] = None, exclude_countries: Optional[Any] = None):
     """Worker function that runs the extraction job in background."""
     job = JOBS.get(job_id)
     if not job:
@@ -88,6 +90,7 @@ def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages
             max_pages=max_pages,
             max_reviews=max_reviews,
             region_filter=region_filter,
+            exclude_countries=exclude_countries,
             progress_callback=progress_callback,
             should_stop_check=should_stop
         )
@@ -127,6 +130,7 @@ def start_extraction(req: ExtractRequest, background_tasks: BackgroundTasks):
         "max_pages": req.max_pages,
         "max_reviews": req.max_reviews,
         "region_filter": req.region_filter,
+        "exclude_countries": req.exclude_countries,
         "status": "pending",
         "current_page": 1,
         "max_pages": req.max_pages,
@@ -145,7 +149,8 @@ def start_extraction(req: ExtractRequest, background_tasks: BackgroundTasks):
         req.marketplace,
         req.max_pages,
         req.max_reviews,
-        req.region_filter
+        req.region_filter,
+        req.exclude_countries
     )
 
     return {
@@ -214,7 +219,7 @@ def analyze_active_tab(req: ActiveTabScanRequest):
                 continue
 
             seller_country = details.get("seller_country", "Unknown")
-            if req.region_filter and not matches_region_filter(seller_country, req.region_filter):
+            if not is_seller_allowed(seller_country, region_filter=req.region_filter, exclude_countries=req.exclude_countries):
                 continue
 
             seen_brands.add(norm_b)

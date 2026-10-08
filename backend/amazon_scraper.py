@@ -9,7 +9,7 @@ from curl_cffi import requests
 from backend.pl_detector import evaluate_private_label, is_megabrand_or_corporate
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
-from backend.seller_checker import fetch_seller_information, extract_seller_id_from_url_or_tag, matches_region_filter
+from backend.seller_checker import fetch_seller_information, extract_seller_id_from_url_or_tag, matches_region_filter, is_seller_allowed
 
 DEFAULT_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
@@ -308,6 +308,7 @@ class AmazonExtractor:
         max_pages: int = 10,
         max_reviews: Optional[int] = None,
         region_filter: Optional[str] = None,
+        exclude_countries: Optional[Any] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         should_stop_check: Optional[Callable[[], bool]] = None
     ) -> List[Dict[str, Any]]:
@@ -431,9 +432,9 @@ class AmazonExtractor:
                         if max_reviews is not None and prod_reviews >= max_reviews:
                             continue
 
-                        # Check seller registered region / country filter
+                        # Check seller registered region / country filter & exclusions
                         seller_country = details.get("seller_country", "Unknown")
-                        if region_filter and not matches_region_filter(seller_country, region_filter):
+                        if not is_seller_allowed(seller_country, region_filter=region_filter, exclude_countries=exclude_countries):
                             continue
 
                         self.seen_brands.add(norm_b)

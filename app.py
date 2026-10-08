@@ -18,7 +18,7 @@ from backend.amazon_scraper import AmazonExtractor
 from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
-from backend.seller_checker import fetch_seller_information, matches_region_filter
+from backend.seller_checker import fetch_seller_information, matches_region_filter, is_seller_allowed, EXCLUDE_COUNTRY_CHOICES
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 REGION_OPTIONS = {
@@ -152,6 +152,7 @@ def save_session_to_history(entry):
             "query": entry.get("query", "Search"),
             "marketplace": entry.get("marketplace", "amazon.com"),
             "region_filter": entry.get("region_filter", "ALL"),
+            "exclude_countries": entry.get("exclude_countries", []),
             "pages": entry.get("pages", 1),
             "brand_count": len(records),
             "under_100_count": under_100_count,
@@ -384,6 +385,15 @@ with tab_single:
             key="chk_single_100"
         )
 
+    single_exclude_sel = st.multiselect(
+        "🚫 Exclude Sellers From (Countries to Skip / Unselect):",
+        options=list(EXCLUDE_COUNTRY_CHOICES.keys()),
+        default=[],
+        help="Sellers registered in these countries will be skipped and NOT extracted (e.g. exclude China/HK).",
+        key="select_single_exclude"
+    )
+    single_exclude_codes = [EXCLUDE_COUNTRY_CHOICES[k] for k in single_exclude_sel]
+
     btn_c1, btn_c2, _ = st.columns([1.2, 1, 4])
     with btn_c1:
         btn_start_single = st.button("🚀 Start Search", type="primary", use_container_width=True, disabled=st.session_state.is_running)
@@ -425,6 +435,7 @@ with tab_single:
                     max_pages=single_pages,
                     max_reviews=max_rev,
                     region_filter=single_region,
+                    exclude_countries=single_exclude_codes,
                     progress_callback=single_progress,
                     should_stop_check=lambda: st.session_state.should_stop
                 )
@@ -442,6 +453,7 @@ with tab_single:
                         "query": single_query.strip(),
                         "marketplace": marketplace,
                         "region_filter": single_region,
+                        "exclude_countries": single_exclude_codes,
                         "pages": single_pages,
                         "records": list(results)
                     })
@@ -476,6 +488,8 @@ with tab_bulk:
             bulk_kw_pages = st.slider("Pages per Keyword:", min_value=1, max_value=10, value=3)
             bulk_kw_region_lbl = st.selectbox("Seller Region:", options=list(REGION_OPTIONS.keys()), index=0, key="select_bulk_kw_region")
             bulk_kw_region = REGION_OPTIONS[bulk_kw_region_lbl]
+            bulk_kw_exclude = st.multiselect("🚫 Exclude Sellers From:", options=list(EXCLUDE_COUNTRY_CHOICES.keys()), default=[], key="multisel_bulk_kw_exclude")
+            bulk_kw_exclude_codes = [EXCLUDE_COUNTRY_CHOICES[k] for k in bulk_kw_exclude]
             bulk_kw_filter_100 = st.checkbox("🔥 Only Extract < 100 Review Brands", value=False)
             btn_start_bulk_kw = st.button("🚀 Start Bulk Keyword Hunt", type="primary", use_container_width=True, disabled=st.session_state.is_running)
 
@@ -511,6 +525,7 @@ with tab_bulk:
                                 max_pages=bulk_kw_pages,
                                 max_reviews=max_rev,
                                 region_filter=bulk_kw_region,
+                                exclude_countries=bulk_kw_exclude_codes,
                                 should_stop_check=lambda: st.session_state.should_stop
                             )
                         except Exception as kw_err:
@@ -537,6 +552,7 @@ with tab_bulk:
                             "query": f"Bulk: {len(raw_kws)} keywords ({', '.join(raw_kws[:3])}...)",
                             "marketplace": marketplace,
                             "region_filter": bulk_kw_region,
+                            "exclude_countries": bulk_kw_exclude_codes,
                             "pages": bulk_kw_pages,
                             "records": list(all_bulk_records)
                         })
@@ -558,6 +574,8 @@ with tab_bulk:
         with ba_c2:
             bulk_asin_region_lbl = st.selectbox("Seller Region:", options=list(REGION_OPTIONS.keys()), index=0, key="select_bulk_asin_region")
             bulk_asin_region = REGION_OPTIONS[bulk_asin_region_lbl]
+            bulk_asin_exclude = st.multiselect("🚫 Exclude Sellers From:", options=list(EXCLUDE_COUNTRY_CHOICES.keys()), default=[], key="multisel_bulk_asin_exclude")
+            bulk_asin_exclude_codes = [EXCLUDE_COUNTRY_CHOICES[k] for k in bulk_asin_exclude]
             btn_start_bulk_asin = st.button("🔍 Run Bulk ASIN Audit", type="primary", use_container_width=True)
         
         if btn_start_bulk_asin:
@@ -591,7 +609,7 @@ with tab_bulk:
                         if not pl_eval["is_private_label"]:
                             return None
 
-                        if not matches_region_filter(details.get("seller_country", "Unknown"), bulk_asin_region):
+                        if not is_seller_allowed(details.get("seller_country", "Unknown"), region_filter=bulk_asin_region, exclude_countries=bulk_asin_exclude_codes):
                             return None
                         
                         decision_maker = find_decision_maker(b_name)
@@ -638,6 +656,7 @@ with tab_bulk:
                         "query": f"Bulk ASINs ({len(asins)} tested)",
                         "marketplace": marketplace,
                         "region_filter": bulk_asin_region,
+                        "exclude_countries": bulk_asin_exclude_codes,
                         "pages": 1,
                         "records": list(audit_records)
                     })
@@ -690,8 +709,8 @@ if st.session_state.active_results:
             options=[
                 "All Brands",
                 f"🔥 Less than 100 Reviews ({under_100_total})",
+                f"🛡️ Exclude China / HK ({non_cn_total})",
                 f"🇺🇸 US Registered Sellers ({us_total})",
-                f"🛡️ Non-China Sellers ({non_cn_total})",
                 f"🇨🇳 China / HK Sellers ({cn_total})",
                 f"🌐 Website Found ({websites_total})",
                 f"✉️ Email Found ({emails_total})",
@@ -705,13 +724,33 @@ if st.session_state.active_results:
     with f_c3:
         text_search = st.text_input("🔍 Live Search (Brand, Seller, Country, Address, Website):", placeholder="Type keyword to filter...")
 
+    all_countries_found = sorted(list({str(c).upper() for c in df_raw["seller_country"].dropna() if str(c).strip()}))
+    if not all_countries_found:
+        all_countries_found = ["US"]
+
+    c_col1, c_col2 = st.columns([1.5, 1.5])
+    with c_col1:
+        unselected_countries = st.multiselect(
+            "🗺️ Filter by Seller Countries (Uncheck to Exclude):",
+            options=all_countries_found,
+            default=all_countries_found,
+            help="Unselect any country to instantly omit those sellers from the table and exports."
+        )
+    with c_col2:
+        direct_exclude_countries = st.multiselect(
+            "🚫 Exclude Specific Countries (Blacklist):",
+            options=all_countries_found,
+            default=[],
+            help="Select countries here to explicitly filter them out."
+        )
+
     df_filtered = df_raw.copy()
     if "Less than 100 Reviews" in filter_mode:
         df_filtered = df_filtered[df_filtered["reviews"] < 100]
+    elif "Exclude China / HK" in filter_mode:
+        df_filtered = df_filtered[~df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK"])]
     elif "US Registered Sellers" in filter_mode:
         df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper() == "US"]
-    elif "Non-China Sellers" in filter_mode:
-        df_filtered = df_filtered[~df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK", "UNKNOWN", ""])]
     elif "China / HK Sellers" in filter_mode:
         df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK"])]
     elif "Website Found" in filter_mode:
@@ -722,6 +761,12 @@ if st.session_state.active_results:
         df_filtered = df_filtered[df_filtered["phone"].str.lower() != "not found"]
     elif "Founder Found Only" in filter_mode:
         df_filtered = df_filtered[df_filtered["founder_name"].str.lower() != "not found"]
+
+    if unselected_countries is not None:
+        df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper().isin(unselected_countries)]
+
+    if direct_exclude_countries:
+        df_filtered = df_filtered[~df_filtered["seller_country"].astype(str).str.upper().isin(direct_exclude_countries)]
 
     if max_rev_cap > 0:
         df_filtered = df_filtered[df_filtered["reviews"] <= max_rev_cap]

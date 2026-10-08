@@ -218,7 +218,62 @@ def fetch_seller_information(marketplace: str = "amazon.com", seller_id: str = "
         SELLER_INFO_CACHE[cache_key] = fallback
         return fallback
 
-def matches_region_filter(seller_country: str, region_filter: Optional[str]) -> bool:
+EXCLUDE_COUNTRY_CHOICES = {
+    "🇨🇳 China (CN)": "CN",
+    "🇭🇰 Hong Kong (HK)": "HK",
+    "🇺🇸 United States (US)": "US",
+    "🇬🇧 United Kingdom (GB)": "GB",
+    "🇩🇪 Germany (DE)": "DE",
+    "🇨🇦 Canada (CA)": "CA",
+    "🇫🇷 France (FR)": "FR",
+    "🇮🇹 Italy (IT)": "IT",
+    "🇪🇸 Spain (ES)": "ES",
+    "🇮🇳 India (IN)": "IN",
+    "🇯🇵 Japan (JP)": "JP",
+    "🇦🇺 Australia (AU)": "AU",
+    "❓ Unknown Country": "UNKNOWN"
+}
+
+def is_seller_allowed(
+    seller_country: str,
+    region_filter: Optional[str] = None,
+    exclude_countries: Optional[Any] = None
+) -> bool:
+    """
+    Checks if a seller's registered country is allowed based on:
+    1. exclude_countries: List or comma-separated string of country codes to reject/skip.
+    2. region_filter: Required region code or whitelist group.
+    """
+    c = (seller_country or "UNKNOWN").upper().strip()
+
+    if exclude_countries:
+        exclude_set = set()
+        if isinstance(exclude_countries, str):
+            raw_items = [x.strip().upper() for x in exclude_countries.split(",") if x.strip()]
+        elif isinstance(exclude_countries, (list, tuple, set)):
+            raw_items = [str(x).strip().upper() for x in exclude_countries if str(x).strip()]
+        else:
+            raw_items = []
+
+        for item in raw_items:
+            if item in ["CN_HK", "CHINA_HK", "CHINA"]:
+                exclude_set.add("CN")
+                exclude_set.add("HK")
+            elif item in ["UK_EU", "EU"]:
+                exclude_set.update(["GB", "UK", "DE", "FR", "IT", "ES", "NL", "PL", "SE", "IE"])
+            elif item in EXCLUDE_COUNTRY_CHOICES.values():
+                exclude_set.add(item)
+            elif item in EXCLUDE_COUNTRY_CHOICES:
+                exclude_set.add(EXCLUDE_COUNTRY_CHOICES[item])
+            else:
+                exclude_set.add(item)
+
+        if c in exclude_set:
+            return False
+
+    return matches_region_filter(seller_country, region_filter)
+
+def matches_region_filter(seller_country: str, region_filter: Optional[str], exclude_countries: Optional[Any] = None) -> bool:
     """
     Checks if a seller's registered country matches the requested region filter:
     - 'ALL' or None: Matches everything
@@ -228,6 +283,10 @@ def matches_region_filter(seller_country: str, region_filter: Optional[str]) -> 
     - 'UK_EU': United Kingdom & Europe (GB, UK, DE, FR, IT, ES, NL, PL, SE)
     - 'CA': Canada
     """
+    if exclude_countries:
+        if not is_seller_allowed(seller_country, region_filter=None, exclude_countries=exclude_countries):
+            return False
+
     if not region_filter or region_filter.upper() in ["ALL", "ANY", "ALL REGIONS", ""]:
         return True
 
@@ -247,3 +306,4 @@ def matches_region_filter(seller_country: str, region_filter: Optional[str]) -> 
     else:
         # Match exact country code
         return c == r
+
