@@ -2,7 +2,13 @@ import re
 import urllib.parse
 from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
-from curl_cffi import requests
+
+try:
+    from curl_cffi import requests
+    HAS_CURL_CFFI = True
+except Exception:
+    import requests
+    HAS_CURL_CFFI = False
 
 # Cache to prevent repeated network requests for the same seller
 SELLER_INFO_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -100,13 +106,23 @@ def fetch_seller_information(marketplace: str = "amazon.com", seller_id: str = "
     req_cookies['i18n-prefs'] = 'USD'
 
     try:
-        resp = requests.get(
-            url,
-            impersonate="chrome124",
-            headers={"Accept-Language": "en-US,en;q=0.9"},
-            cookies=req_cookies,
-            timeout=8
-        )
+        headers = {"Accept-Language": "en-US,en;q=0.9"}
+        if HAS_CURL_CFFI:
+            resp = requests.get(
+                url,
+                impersonate="chrome124",
+                headers=headers,
+                cookies=req_cookies,
+                timeout=8
+            )
+        else:
+            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            resp = requests.get(
+                url,
+                headers=headers,
+                cookies=req_cookies,
+                timeout=8
+            )
 
         if resp.status_code != 200:
             res = {

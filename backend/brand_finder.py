@@ -4,7 +4,14 @@ import urllib.parse
 from typing import Dict, Any, Optional, List, Set
 from bs4 import BeautifulSoup
 import requests
-from ddgs import DDGS
+
+try:
+    from ddgs import DDGS
+except Exception:
+    try:
+        from duckduckgo_search import DDGS
+    except Exception:
+        DDGS = None
 
 # Cache to avoid repeated website/contact discovery for the same brand
 BRAND_CONTACT_CACHE: Dict[str, Dict[str, Any]] = {}

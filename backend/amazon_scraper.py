@@ -4,7 +4,13 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Set, Callable
 from bs4 import BeautifulSoup
-from curl_cffi import requests
+
+try:
+    from curl_cffi import requests
+    HAS_CURL_CFFI = True
+except Exception:
+    import requests
+    HAS_CURL_CFFI = False
 
 from backend.pl_detector import evaluate_private_label, is_megabrand_or_corporate
 from backend.linkedin_finder import find_decision_maker
@@ -58,13 +64,23 @@ class AmazonExtractor:
                 req_cookies = dict(self.cookies)
                 req_cookies['session-id'] = generate_amazon_session_id()
 
-                resp = requests.get(
-                    url,
-                    headers=DEFAULT_HEADERS,
-                    cookies=req_cookies,
-                    impersonate=imp,
-                    timeout=15
-                )
+                req_headers = dict(DEFAULT_HEADERS)
+                if HAS_CURL_CFFI:
+                    resp = requests.get(
+                        url,
+                        headers=req_headers,
+                        cookies=req_cookies,
+                        impersonate=imp,
+                        timeout=15
+                    )
+                else:
+                    req_headers['User-Agent'] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    resp = requests.get(
+                        url,
+                        headers=req_headers,
+                        cookies=req_cookies,
+                        timeout=15
+                    )
                 
                 # Check for valid HTML response free of captchas / bot verification walls
                 if resp.status_code == 200:

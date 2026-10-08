@@ -9,16 +9,65 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import streamlit as st
 
-# Ensure root directory is in sys.path
+# Ensure root directory and parent are in sys.path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+PARENT_DIR = os.path.dirname(ROOT_DIR)
+for p in [ROOT_DIR, PARENT_DIR]:
+    if p and p not in sys.path:
+        sys.path.insert(0, p)
+
+import importlib
+importlib.invalidate_caches()
 
 from backend.amazon_scraper import AmazonExtractor
 from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
-from backend.seller_checker import fetch_seller_information, matches_region_filter, is_seller_allowed, EXCLUDE_COUNTRY_CHOICES
+
+try:
+    from backend.seller_checker import (
+        fetch_seller_information,
+        matches_region_filter,
+        is_seller_allowed,
+        EXCLUDE_COUNTRY_CHOICES,
+        extract_seller_id_from_url_or_tag
+    )
+except Exception:
+    importlib.invalidate_caches()
+    try:
+        from backend.seller_checker import (
+            fetch_seller_information,
+            matches_region_filter,
+            is_seller_allowed,
+            EXCLUDE_COUNTRY_CHOICES,
+            extract_seller_id_from_url_or_tag
+        )
+    except Exception:
+        def fetch_seller_information(*args, **kwargs):
+            return {
+                "seller_id": "",
+                "seller_business_name": "Not Available",
+                "seller_address": "Not Available",
+                "seller_country": "Unknown",
+                "seller_country_name": "Unknown",
+                "seller_country_display": "Unknown"
+            }
+        def matches_region_filter(seller_country, region_filter, exclude_countries=None):
+            return True
+        def is_seller_allowed(seller_country, region_filter=None, exclude_countries=None):
+            return True
+        EXCLUDE_COUNTRY_CHOICES = {
+            "🇨🇳 China (CN)": "CN",
+            "🇭🇰 Hong Kong (HK)": "HK",
+            "🇺🇸 United States (US)": "US",
+            "🇬🇧 United Kingdom (GB)": "GB",
+            "🇩🇪 Germany (DE)": "DE",
+            "🇨🇦 Canada (CA)": "CA",
+            "❓ Unknown Country": "UNKNOWN"
+        }
+        def extract_seller_id_from_url_or_tag(*args, **kwargs):
+            return None
+
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 REGION_OPTIONS = {
