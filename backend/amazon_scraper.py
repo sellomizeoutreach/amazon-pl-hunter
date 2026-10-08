@@ -9,6 +9,7 @@ from curl_cffi import requests
 from backend.pl_detector import evaluate_private_label, is_megabrand_or_corporate
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
+from backend.seller_checker import fetch_seller_information, extract_seller_id_from_url_or_tag, matches_region_filter
 
 DEFAULT_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
@@ -203,15 +204,22 @@ class AmazonExtractor:
         if soup.select_one('#aplus, .aplus-v2, #dpx-aplus-brand-story_feature_div, [data-feature-name="aplus"]'):
             has_aplus = True
 
-        # 3. Extract Buy Box Seller (Multi-Strategy Parser)
+        # 3. Extract Buy Box Seller & Seller ID
         buybox_seller = ""
+        seller_id = ""
         seller_profile = soup.find(id='sellerProfileTriggerId')
         if seller_profile and seller_profile.get_text(strip=True):
             buybox_seller = seller_profile.get_text(strip=True)
+            seller_id = extract_seller_id_from_url_or_tag(seller_profile) or ""
         elif soup.find(id='merchant-info'):
             m_text = soup.find(id='merchant-info').get_text(strip=True)
             m = re.search(r'Sold by\s+([^,\.]+?)(?:\s+and\s+ships|\s*\(|\s*$|\.)', m_text, re.IGNORECASE)
             buybox_seller = m.group(1).strip() if m else m_text[:50].strip()
+            for a in soup.find(id='merchant-info').find_all('a', href=True):
+                s_id = extract_seller_id_from_url_or_tag(a)
+                if s_id:
+                    seller_id = s_id
+                    break
         else:
             # Check tabular-buybox and any elements with "Sold by"
             for node in soup.find_all(['span', 'div', 'td', 'p'], string=re.compile(r'Sold by', re.I)):
@@ -221,15 +229,27 @@ class AmazonExtractor:
                     cand = m.group(1).strip()
                     if cand and len(cand) < 60 and not any(w in cand.lower() for w in ['amazon', 'return', 'refund', 'detail']):
                         buybox_seller = cand
+                        parent = node.parent
+                        if parent:
+                            for a in parent.find_all('a', href=True):
+                                s_id = extract_seller_id_from_url_or_tag(a)
+                                if s_id:
+                                    seller_id = s_id
+                                    break
                         break
-                parent = node.parent
-                if parent:
-                    link = parent.find('a')
-                    if link and link.get_text(strip=True):
-                        cand = link.get_text(strip=True)
-                        if len(cand) < 60 and not any(w in cand.lower() for w in ['amazon', 'return', 'detail']):
-                            buybox_seller = cand
-                            break
+
+        # Fallback check across all links for seller token
+        if not seller_id:
+            for a in soup.find_all('a', href=True):
+                href = a.get('href', '')
+                if any(k in href for k in ['/seller/at-a-glance.html', 'seller=', '/shops/', '/sp?']):
+                    s_id = extract_seller_id_from_url_or_tag(a)
+                    if s_id:
+                        seller_id = s_id
+                        break
+
+        # Fetch Detailed Seller Information (Business Name, Address, Country)
+        seller_info = fetch_seller_information(self.marketplace, seller_id, cookies=self.cookies)
 
         # 4. Check Other Sellers & Total Offers count
         all_sellers = []
@@ -268,6 +288,12 @@ class AmazonExtractor:
         return {
             "brand": brand.strip(),
             "buybox_seller": buybox_seller.strip(),
+            "seller_id": seller_id,
+            "seller_business_name": seller_info.get("seller_business_name", "Not Available"),
+            "seller_address": seller_info.get("seller_address", "Not Available"),
+            "seller_country": seller_info.get("seller_country", "Unknown"),
+            "seller_country_name": seller_info.get("seller_country_name", "Unknown"),
+            "seller_country_display": seller_info.get("seller_country_display", "Unknown"),
             "all_sellers": all_sellers,
             "has_brand_store": has_brand_store,
             "has_aplus": has_aplus,
@@ -281,6 +307,7 @@ class AmazonExtractor:
         query: str,
         max_pages: int = 10,
         max_reviews: Optional[int] = None,
+        region_filter: Optional[str] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         should_stop_check: Optional[Callable[[], bool]] = None
     ) -> List[Dict[str, Any]]:
@@ -404,6 +431,11 @@ class AmazonExtractor:
                         if max_reviews is not None and prod_reviews >= max_reviews:
                             continue
 
+                        # Check seller registered region / country filter
+                        seller_country = details.get("seller_country", "Unknown")
+                        if region_filter and not matches_region_filter(seller_country, region_filter):
+                            continue
+
                         self.seen_brands.add(norm_b)
 
                         if progress_callback:
@@ -414,7 +446,7 @@ class AmazonExtractor:
                                 "total_scanned": total_scanned_count,
                                 "brand_name": brand_name,
                                 "asin": prod["asin"],
-                                "message": f"[Page {page}/{max_pages}] Verified PL: '{brand_name}' ({prod_reviews} reviews). Discovering website, email, phone & LinkedIn...",
+                                "message": f"[Page {page}/{max_pages}] Verified PL: '{brand_name}' ({prod_reviews} reviews, {details.get('seller_country_display', 'Unknown')}). Discovering website, email, phone & LinkedIn...",
                                 "total_found": len(extracted_records)
                             })
 
@@ -426,6 +458,11 @@ class AmazonExtractor:
                             "asin": prod["asin"],
                             "brand_name": brand_name,
                             "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
+                            "seller_country": details.get("seller_country", "Unknown"),
+                            "seller_country_display": details.get("seller_country_display", "Unknown"),
+                            "seller_business_name": details.get("seller_business_name", "Not Available"),
+                            "seller_address": details.get("seller_address", "Not Available"),
+                            "seller_id": details.get("seller_id", ""),
                             "reviews": prod_reviews,
                             "website": brand_contacts.get("website", "Not Found"),
                             "email": brand_contacts.get("email", "Not Found"),

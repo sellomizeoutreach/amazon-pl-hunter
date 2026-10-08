@@ -65,6 +65,18 @@
         </div>
       </div>
 
+      <div class="form-group">
+        <label for="region-filter">Seller Registered Region / Country:</label>
+        <select id="region-filter">
+          <option value="ALL" selected>🌍 All Seller Regions</option>
+          <option value="US">🇺🇸 United States (US Only)</option>
+          <option value="NON_CN">🛡️ Non-China (Western: US, CA, UK, EU, AU)</option>
+          <option value="CN">🇨🇳 China & Hong Kong (CN / HK)</option>
+          <option value="UK_EU">🇬🇧 UK & Europe (GB, DE, FR, IT, ES)</option>
+          <option value="CA">🇨🇦 Canada (CA Only)</option>
+        </select>
+      </div>
+
       <div class="form-row filter-row">
         <label class="checkbox-container" for="filter-under-100-crawl">
           <input type="checkbox" id="filter-under-100-crawl" />
@@ -84,6 +96,17 @@
       <p class="tab-info">
         Quickly scans the products on your currently open Amazon search or category tab, checks all sellers for PL ownership, and finds their founders on LinkedIn.
       </p>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="active-region-filter">Filter Seller Region:</label>
+        <select id="active-region-filter">
+          <option value="ALL" selected>🌍 All Seller Regions</option>
+          <option value="US">🇺🇸 United States (US Only)</option>
+          <option value="NON_CN">🛡️ Non-China (Western: US, CA, UK, EU, AU)</option>
+          <option value="CN">🇨🇳 China & Hong Kong (CN / HK)</option>
+          <option value="UK_EU">🇬🇧 UK & Europe (GB, DE, FR, IT, ES)</option>
+          <option value="CA">🇨🇦 Canada (CA Only)</option>
+        </select>
+      </div>
       <button id="btn-scan-tab" class="primary-btn secondary-style">
         <span class="btn-icon">⚡</span> Extract from Active Tab
       </button>
@@ -186,7 +209,13 @@
       <div class="action-bar-left">
         <span class="section-title">Extracted Brands (<span id="results-count">0</span>)</span>
         <button id="btn-filter-under-100" class="filter-toggle-btn" title="Toggle: Show only brands with less than 100 reviews">
-          🔥 &lt; 100 Reviews <span id="under-100-badge" class="filter-count-badge">0</span>
+          🔥 &lt; 100 Revs <span id="under-100-badge" class="filter-count-badge">0</span>
+        </button>
+        <button id="btn-filter-us" class="filter-toggle-btn" title="Toggle: Show US registered sellers only">
+          🇺🇸 US Only <span id="us-badge" class="filter-count-badge">0</span>
+        </button>
+        <button id="btn-filter-non-cn" class="filter-toggle-btn" title="Toggle: Show Non-China Western sellers">
+          🛡️ Non-CN <span id="non-cn-badge" class="filter-count-badge">0</span>
         </button>
       </div>
       <div class="export-btns">
@@ -207,6 +236,8 @@
             <th>ASIN</th>
             <th>Brand Name</th>
             <th>PL Seller</th>
+            <th>Seller Region</th>
+            <th>Seller Legal Name</th>
             <th>Reviews</th>
             <th>Website</th>
             <th>Email</th>
@@ -218,7 +249,7 @@
         </thead>
         <tbody id="results-tbody">
           <tr class="empty-row">
-            <td colspan="10">No brands extracted yet. Enter a keyword or click Extract to start!</td>
+            <td colspan="12">No brands extracted yet. Enter a keyword or click Extract to start!</td>
           </tr>
         </tbody>
       </table>

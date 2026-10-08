@@ -18,7 +18,17 @@ from backend.amazon_scraper import AmazonExtractor
 from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
+from backend.seller_checker import fetch_seller_information, matches_region_filter
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
+
+REGION_OPTIONS = {
+    "🌍 All Regions / Countries": "ALL",
+    "🇺🇸 United States (US Only)": "US",
+    "🛡️ Non-China (Western: US, CA, UK, EU, AU)": "NON_CN",
+    "🇨🇳 China & Hong Kong (CN / HK)": "CN",
+    "🇬🇧 UK & Europe (GB, DE, FR, IT, ES)": "UK_EU",
+    "🇨🇦 Canada (CA Only)": "CA"
+}
 
 # ==========================================
 # PERSISTENT HISTORY STORAGE (File-backed)
@@ -126,6 +136,8 @@ def save_session_to_history(entry):
         
         records = entry.get("records", [])
         under_100_count = sum(1 for r in records if int(r.get("reviews") or 0) < 100)
+        us_sellers_count = sum(1 for r in records if (r.get("seller_country") or "").upper() == "US")
+        non_cn_sellers_count = sum(1 for r in records if (r.get("seller_country") or "").upper() not in ["CN", "HK", "UNKNOWN", ""])
         websites_count = sum(1 for r in records if r.get("website") and r.get("website").lower() != "not found")
         emails_count = sum(1 for r in records if r.get("email") and r.get("email").lower() != "not found")
         phones_count = sum(1 for r in records if r.get("phone") and r.get("phone").lower() != "not found")
@@ -139,9 +151,12 @@ def save_session_to_history(entry):
             "type": entry.get("type", "single_search"),
             "query": entry.get("query", "Search"),
             "marketplace": entry.get("marketplace", "amazon.com"),
+            "region_filter": entry.get("region_filter", "ALL"),
             "pages": entry.get("pages", 1),
             "brand_count": len(records),
             "under_100_count": under_100_count,
+            "us_sellers_count": us_sellers_count,
+            "non_cn_sellers_count": non_cn_sellers_count,
             "websites_count": websites_count,
             "emails_count": emails_count,
             "phones_count": phones_count,
@@ -337,7 +352,7 @@ tab_single, tab_bulk, tab_history = st.tabs([
 # TAB 1: SINGLE SEARCH & CATEGORY CRAWL
 # ----------------------------------------------------
 with tab_single:
-    col_q, col_p, col_f = st.columns([3, 1.2, 1.8])
+    col_q, col_p, col_r, col_f = st.columns([2.8, 1.0, 1.6, 1.6])
     with col_q:
         single_query = st.text_input(
             "Search Keyword or Category URL",
@@ -352,6 +367,15 @@ with tab_single:
             value=3,
             key="slider_single_pages"
         )
+    with col_r:
+        single_region_lbl = st.selectbox(
+            "Seller Region / Country",
+            options=list(REGION_OPTIONS.keys()),
+            index=0,
+            help="Filter brands by where the seller entity is registered on Amazon (e.g. US, Western Non-China, China).",
+            key="select_single_region"
+        )
+        single_region = REGION_OPTIONS[single_region_lbl]
     with col_f:
         single_filter_100 = st.checkbox(
             "🔥 Only Extract < 100 Review Brands",
@@ -390,7 +414,7 @@ with tab_single:
                 if "record" in update:
                     st.session_state.active_results.append(update["record"])
                     df_live = pd.DataFrame(st.session_state.active_results)
-                    cols = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
+                    cols = ["asin", "brand_name", "matched_seller", "seller_country", "seller_business_name", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
                     live_table.dataframe(df_live[[c for c in cols if c in df_live.columns]], use_container_width=True)
 
             try:
@@ -400,6 +424,7 @@ with tab_single:
                     query=single_query.strip(),
                     max_pages=single_pages,
                     max_reviews=max_rev,
+                    region_filter=single_region,
                     progress_callback=single_progress,
                     should_stop_check=lambda: st.session_state.should_stop
                 )
@@ -416,6 +441,7 @@ with tab_single:
                         "type": "single_search",
                         "query": single_query.strip(),
                         "marketplace": marketplace,
+                        "region_filter": single_region,
                         "pages": single_pages,
                         "records": list(results)
                     })
@@ -439,15 +465,17 @@ with tab_bulk:
     if bulk_mode == "⚡ Bulk Keyword Hunting":
         st.markdown("**Enter multiple search keywords (one per line). The engine crawls each keyword up to 10 pages, verifies PL sellers, and combines all discovered brands into one unified master table.**")
         
-        b_col_txt, b_col_opt = st.columns([3, 1.5])
+        b_col_txt, b_col_opt = st.columns([3, 1.8])
         with b_col_txt:
             bulk_keywords_text = st.text_area(
                 "Keywords List (one per line):",
                 placeholder="wireless earbuds\nposture corrector\nyoga mat non slip\nsilicone baking mat\nbamboo cutting board",
-                height=130
+                height=150
             )
         with b_col_opt:
             bulk_kw_pages = st.slider("Pages per Keyword:", min_value=1, max_value=10, value=3)
+            bulk_kw_region_lbl = st.selectbox("Seller Region:", options=list(REGION_OPTIONS.keys()), index=0, key="select_bulk_kw_region")
+            bulk_kw_region = REGION_OPTIONS[bulk_kw_region_lbl]
             bulk_kw_filter_100 = st.checkbox("🔥 Only Extract < 100 Review Brands", value=False)
             btn_start_bulk_kw = st.button("🚀 Start Bulk Keyword Hunt", type="primary", use_container_width=True, disabled=st.session_state.is_running)
 
@@ -482,6 +510,7 @@ with tab_bulk:
                                 query=kw,
                                 max_pages=bulk_kw_pages,
                                 max_reviews=max_rev,
+                                region_filter=bulk_kw_region,
                                 should_stop_check=lambda: st.session_state.should_stop
                             )
                         except Exception as kw_err:
@@ -496,7 +525,7 @@ with tab_bulk:
                         
                         st.session_state.active_results = list(all_bulk_records)
                         df_b_live = pd.DataFrame(all_bulk_records)
-                        cols = ["asin", "brand_name", "matched_seller", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
+                        cols = ["asin", "brand_name", "matched_seller", "seller_country", "seller_business_name", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
                         b_table.dataframe(df_b_live[[c for c in cols if c in df_b_live.columns]], use_container_width=True)
                     
                     b_overall_bar.progress(100)
@@ -507,6 +536,7 @@ with tab_bulk:
                             "type": "bulk_keywords",
                             "query": f"Bulk: {len(raw_kws)} keywords ({', '.join(raw_kws[:3])}...)",
                             "marketplace": marketplace,
+                            "region_filter": bulk_kw_region,
                             "pages": bulk_kw_pages,
                             "records": list(all_bulk_records)
                         })
@@ -517,13 +547,18 @@ with tab_bulk:
                     st.session_state.should_stop = False
 
     else:
-        st.markdown("**Audit a list of ASINs directly. Concurrently inspects Buy Box seller, brand store, multi-seller roster, review counts, and finds decision makers on LinkedIn.**")
-        asin_text = st.text_area(
-            "Paste ASINs (comma, space, or newline separated):",
-            placeholder="B08N5WRWNW, B07XJ8C8F5, B09B8W2T8S\nB08XYZ1234",
-            height=120
-        )
-        btn_start_bulk_asin = st.button("🔍 Run Bulk ASIN Audit", type="primary")
+        st.markdown("**Audit a list of ASINs directly. Concurrently inspects Buy Box seller, brand store, registered seller country, review counts, and finds decision makers on LinkedIn.**")
+        ba_c1, ba_c2 = st.columns([3, 1.8])
+        with ba_c1:
+            asin_text = st.text_area(
+                "Paste ASINs (comma, space, or newline separated):",
+                placeholder="B08N5WRWNW, B07XJ8C8F5, B09B8W2T8S\nB08XYZ1234",
+                height=130
+            )
+        with ba_c2:
+            bulk_asin_region_lbl = st.selectbox("Seller Region:", options=list(REGION_OPTIONS.keys()), index=0, key="select_bulk_asin_region")
+            bulk_asin_region = REGION_OPTIONS[bulk_asin_region_lbl]
+            btn_start_bulk_asin = st.button("🔍 Run Bulk ASIN Audit", type="primary", use_container_width=True)
         
         if btn_start_bulk_asin:
             asins = list(dict.fromkeys(re.findall(r'[B0-9A-Z]{10}', asin_text.upper())))
@@ -555,6 +590,9 @@ with tab_bulk:
                         
                         if not pl_eval["is_private_label"]:
                             return None
+
+                        if not matches_region_filter(details.get("seller_country", "Unknown"), bulk_asin_region):
+                            return None
                         
                         decision_maker = find_decision_maker(b_name)
                         brand_contacts = find_brand_website_and_contacts(b_name)
@@ -562,6 +600,11 @@ with tab_bulk:
                             "asin": asin,
                             "brand_name": b_name,
                             "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
+                            "seller_country": details.get("seller_country", "Unknown"),
+                            "seller_country_display": details.get("seller_country_display", "Unknown"),
+                            "seller_business_name": details.get("seller_business_name", "Not Available"),
+                            "seller_address": details.get("seller_address", "Not Available"),
+                            "seller_id": details.get("seller_id", ""),
                             "reviews": int(details.get("reviews") or 0),
                             "website": brand_contacts.get("website", "Not Found"),
                             "email": brand_contacts.get("email", "Not Found"),
@@ -594,6 +637,7 @@ with tab_bulk:
                         "type": "bulk_asins",
                         "query": f"Bulk ASINs ({len(asins)} tested)",
                         "marketplace": marketplace,
+                        "region_filter": bulk_asin_region,
                         "pages": 1,
                         "records": list(audit_records)
                     })
@@ -612,35 +656,43 @@ if st.session_state.active_results:
 
     total_brands = len(df_raw)
     under_100_total = int((df_raw["reviews"] < 100).sum())
+    us_total = len(df_raw[df_raw["seller_country"].astype(str).str.upper() == "US"]) if "seller_country" in df_raw else 0
+    non_cn_total = len(df_raw[~df_raw["seller_country"].astype(str).str.upper().isin(["CN", "HK", "UNKNOWN", ""])]) if "seller_country" in df_raw else 0
+    cn_total = len(df_raw[df_raw["seller_country"].astype(str).str.upper().isin(["CN", "HK"])]) if "seller_country" in df_raw else 0
     websites_total = len(df_raw[df_raw["website"].str.lower() != "not found"]) if "website" in df_raw else 0
     emails_total = len(df_raw[df_raw["email"].str.lower() != "not found"]) if "email" in df_raw else 0
     phones_total = len(df_raw[df_raw["phone"].str.lower() != "not found"]) if "phone" in df_raw else 0
     founders_total = len(df_raw[df_raw["founder_name"].str.lower() != "not found"]) if "founder_name" in df_raw else 0
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     with m1:
         st.markdown(f'<div class="metric-card"><div class="metric-val">{total_brands}</div><div class="metric-lbl">Total PL Brands</div></div>', unsafe_allow_html=True)
     with m2:
         st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {under_100_total}</div><div class="metric-lbl">&lt; 100 Reviews</div></div>', unsafe_allow_html=True)
     with m3:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#38bdf8">🌐 {websites_total}</div><div class="metric-lbl">Brand Websites</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#60a5fa">🇺🇸 {us_total}</div><div class="metric-lbl">US Sellers</div></div>', unsafe_allow_html=True)
     with m4:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#fbbf24">✉️ {emails_total}</div><div class="metric-lbl">Public Emails</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#10b981">🛡️ {non_cn_total}</div><div class="metric-lbl">Non-China</div></div>', unsafe_allow_html=True)
     with m5:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#a78bfa">📞 {phones_total}</div><div class="metric-lbl">Phone Numbers</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#38bdf8">🌐 {websites_total}</div><div class="metric-lbl">Websites</div></div>', unsafe_allow_html=True)
     with m6:
-        st.markdown(f'<div class="metric-card"><div class="metric-val">{founders_total}</div><div class="metric-lbl">Founders Found</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#fbbf24">✉️ {emails_total}</div><div class="metric-lbl">Emails</div></div>', unsafe_allow_html=True)
+    with m7:
+        st.markdown(f'<div class="metric-card"><div class="metric-val">{founders_total}</div><div class="metric-lbl">Founders</div></div>', unsafe_allow_html=True)
 
     st.write("")
     
     st.subheader("🎛️ Results Filter & Search")
-    f_c1, f_c2, f_c3 = st.columns([2.5, 1.2, 2.3])
+    f_c1, f_c2, f_c3 = st.columns([3, 1.2, 2.3])
     with f_c1:
         filter_mode = st.radio(
             "Quick Filter:",
             options=[
                 "All Brands",
                 f"🔥 Less than 100 Reviews ({under_100_total})",
+                f"🇺🇸 US Registered Sellers ({us_total})",
+                f"🛡️ Non-China Sellers ({non_cn_total})",
+                f"🇨🇳 China / HK Sellers ({cn_total})",
                 f"🌐 Website Found ({websites_total})",
                 f"✉️ Email Found ({emails_total})",
                 f"📞 Phone Found ({phones_total})",
@@ -651,11 +703,17 @@ if st.session_state.active_results:
     with f_c2:
         max_rev_cap = st.number_input("Max Reviews Cap (0 = Unlimited):", min_value=0, max_value=50000, value=0, step=50)
     with f_c3:
-        text_search = st.text_input("🔍 Live Search (Brand, Seller, Website, Email, Phone):", placeholder="Type keyword to filter...")
+        text_search = st.text_input("🔍 Live Search (Brand, Seller, Country, Address, Website):", placeholder="Type keyword to filter...")
 
     df_filtered = df_raw.copy()
     if "Less than 100 Reviews" in filter_mode:
         df_filtered = df_filtered[df_filtered["reviews"] < 100]
+    elif "US Registered Sellers" in filter_mode:
+        df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper() == "US"]
+    elif "Non-China Sellers" in filter_mode:
+        df_filtered = df_filtered[~df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK", "UNKNOWN", ""])]
+    elif "China / HK Sellers" in filter_mode:
+        df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK"])]
     elif "Website Found" in filter_mode:
         df_filtered = df_filtered[df_filtered["website"].str.lower() != "not found"]
     elif "Email Found" in filter_mode:
@@ -673,6 +731,9 @@ if st.session_state.active_results:
         df_filtered = df_filtered[
             df_filtered["brand_name"].str.lower().str.contains(q_l, na=False) |
             df_filtered["matched_seller"].str.lower().str.contains(q_l, na=False) |
+            (df_filtered["seller_country"].astype(str).str.lower().str.contains(q_l, na=False) if "seller_country" in df_filtered else False) |
+            (df_filtered["seller_business_name"].astype(str).str.lower().str.contains(q_l, na=False) if "seller_business_name" in df_filtered else False) |
+            (df_filtered["seller_address"].astype(str).str.lower().str.contains(q_l, na=False) if "seller_address" in df_filtered else False) |
             (df_filtered["website"].str.lower().str.contains(q_l, na=False) if "website" in df_filtered else False) |
             (df_filtered["email"].str.lower().str.contains(q_l, na=False) if "email" in df_filtered else False) |
             (df_filtered["phone"].str.lower().str.contains(q_l, na=False) if "phone" in df_filtered else False) |
@@ -708,12 +769,15 @@ if st.session_state.active_results:
         "asin",
         "brand_name",
         "matched_seller",
+        "seller_country",
+        "seller_business_name",
         "reviews",
         "website",
         "email",
         "phone",
         "founder_name",
         "linkedin_url",
+        "seller_address",
         "pl_confidence",
         "price",
         "product_title",
@@ -727,12 +791,15 @@ if st.session_state.active_results:
             "asin": st.column_config.TextColumn("ASIN"),
             "brand_name": st.column_config.TextColumn("Brand Name"),
             "matched_seller": st.column_config.TextColumn("PL Seller"),
+            "seller_country": st.column_config.TextColumn("Seller Region / Country"),
+            "seller_business_name": st.column_config.TextColumn("Seller Legal Name"),
             "reviews": st.column_config.NumberColumn("Reviews", format="%d ⭐"),
             "website": st.column_config.LinkColumn("Brand Website"),
             "email": st.column_config.TextColumn("Public Email"),
             "phone": st.column_config.TextColumn("Phone Number"),
             "founder_name": st.column_config.TextColumn("Founder / Decision Maker"),
             "linkedin_url": st.column_config.LinkColumn("LinkedIn Profile"),
+            "seller_address": st.column_config.TextColumn("Registered Address"),
             "pl_confidence": st.column_config.TextColumn("PL Status"),
             "price": st.column_config.TextColumn("Price"),
             "product_title": st.column_config.TextColumn("Product Title"),
@@ -760,6 +827,8 @@ with tab_history:
                 all_history_records.append(r)
 
     hist_under_100 = sum(1 for r in all_history_records if int(r.get("reviews") or 0) < 100)
+    hist_us = sum(1 for r in all_history_records if (r.get("seller_country") or "").upper() == "US")
+    hist_non_cn = sum(1 for r in all_history_records if (r.get("seller_country") or "").upper() not in ["CN", "HK", "UNKNOWN", ""])
     hist_websites = sum(1 for r in all_history_records if r.get("website") and r.get("website").lower() != "not found")
     hist_emails = sum(1 for r in all_history_records if r.get("email") and r.get("email").lower() != "not found")
     hist_phones = sum(1 for r in all_history_records if r.get("phone") and r.get("phone").lower() != "not found")
@@ -773,9 +842,9 @@ with tab_history:
     with h_m3:
         st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {hist_under_100}</div><div class="metric-lbl">&lt; 100 Revs</div></div>', unsafe_allow_html=True)
     with h_m4:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#38bdf8">🌐 {hist_websites} | ✉️ {hist_emails}</div><div class="metric-lbl">Websites & Emails</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#60a5fa">🇺🇸 {hist_us} | 🛡️ {hist_non_cn}</div><div class="metric-lbl">US / Non-CN Sellers</div></div>', unsafe_allow_html=True)
     with h_m5:
-        st.markdown(f'<div class="metric-card"><div class="metric-val">{hist_founders}</div><div class="metric-lbl">Founders Found</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#38bdf8">🌐 {hist_websites} | 👤 {hist_founders}</div><div class="metric-lbl">Sites & Founders</div></div>', unsafe_allow_html=True)
 
     st.write("")
     
@@ -832,7 +901,7 @@ with tab_history:
                 else:
                     st.error(msg)
 
-    history_search = st.text_input("🔍 Search saved searches by keyword, brand name, or marketplace:", "", placeholder="Filter history...")
+    history_search = st.text_input("🔍 Search saved searches by keyword, brand name, seller, country, or marketplace:", "", placeholder="Filter history...")
     
     filtered_history = history_list
     if history_search.strip():
@@ -843,6 +912,7 @@ with tab_history:
             or h_q in item.get("marketplace", "").lower()
             or any(h_q in r.get("brand_name", "").lower() for r in item.get("records", []))
             or any(h_q in r.get("matched_seller", "").lower() for r in item.get("records", []))
+            or any(h_q in str(r.get("seller_country", "")).lower() for r in item.get("records", []))
         ]
 
     st.write("")
@@ -871,6 +941,8 @@ with tab_history:
                     <div style="display:flex;gap:12px;font-size:12px;color:#cbd5e1;flex-wrap:wrap;">
                         <span>🏷️ <b>{item.get('brand_count', 0)}</b> Brands</span>
                         <span style="color:#34d399">🔥 <b>{item.get('under_100_count', 0)}</b> (&lt; 100 revs)</span>
+                        <span style="color:#60a5fa">🇺🇸 <b>{item.get('us_sellers_count', 0)}</b> US</span>
+                        <span style="color:#10b981">🛡️ <b>{item.get('non_cn_sellers_count', 0)}</b> Non-CN</span>
                         <span style="color:#38bdf8">🌐 <b>{item.get('websites_count', 0)}</b> Web</span>
                         <span style="color:#fbbf24">✉️ <b>{item.get('emails_count', 0)}</b> Email</span>
                         <span style="color:#a78bfa">📞 <b>{item.get('phones_count', 0)}</b> Phone</span>
@@ -896,11 +968,13 @@ with tab_history:
                         for r in (item.get("records", [])[:15]):
                             rev = int(r.get("reviews") or 0)
                             rev_str = f"🔥 {rev} revs" if rev < 100 else f"{rev} revs"
+                            country = r.get("seller_country")
+                            c_str = f" [📍 {country}]" if country and country != "Unknown" else ""
                             web = f" | 🌐 {r.get('website')}" if r.get('website') and r.get('website') != 'Not Found' else ""
                             em = f" | ✉️ {r.get('email')}" if r.get('email') and r.get('email') != 'Not Found' else ""
                             ph = f" | 📞 {r.get('phone')}" if r.get('phone') and r.get('phone') != 'Not Found' else ""
                             founder = f" | 👤 {r.get('founder_name')}" if r.get('founder_name') and r.get('founder_name') != 'Not Found' else ""
-                            st.caption(f"• **{r.get('brand_name')}** ({rev_str}) — {r.get('matched_seller')}{web}{em}{ph}{founder}")
+                            st.caption(f"• **{r.get('brand_name')}** ({rev_str}) — {r.get('matched_seller')}{c_str}{web}{em}{ph}{founder}")
                 with hc5:
                     if st.button("🗑️", key=f"btn_h_del_{item['id']}", help="Delete this session"):
                         delete_history_session(item["id"])

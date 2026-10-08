@@ -9,6 +9,7 @@ from backend.amazon_scraper import AmazonExtractor
 from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
+from backend.seller_checker import matches_region_filter
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 app = FastAPI(
@@ -33,6 +34,7 @@ class ExtractRequest(BaseModel):
     marketplace: str = Field(default="amazon.com", description="Amazon domain (e.g. amazon.com, amazon.co.uk)")
     max_pages: int = Field(default=3, ge=1, le=10, description="Number of pages to crawl (1 to 10)")
     max_reviews: Optional[int] = Field(default=None, description="Optional maximum review count limit, e.g. 100")
+    region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
 
 class DirectProductScanItem(BaseModel):
     asin: str
@@ -46,8 +48,9 @@ class ActiveTabScanRequest(BaseModel):
     products: List[DirectProductScanItem]
     marketplace: Optional[str] = "amazon.com"
     max_reviews: Optional[int] = Field(default=None, description="Optional maximum review count limit, e.g. 100")
+    region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
 
-def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages: int, max_reviews: Optional[int] = None):
+def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages: int, max_reviews: Optional[int] = None, region_filter: Optional[str] = None):
     """Worker function that runs the extraction job in background."""
     job = JOBS.get(job_id)
     if not job:
@@ -84,6 +87,7 @@ def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages
             query=query,
             max_pages=max_pages,
             max_reviews=max_reviews,
+            region_filter=region_filter,
             progress_callback=progress_callback,
             should_stop_check=should_stop
         )
@@ -122,6 +126,7 @@ def start_extraction(req: ExtractRequest, background_tasks: BackgroundTasks):
         "marketplace": req.marketplace,
         "max_pages": req.max_pages,
         "max_reviews": req.max_reviews,
+        "region_filter": req.region_filter,
         "status": "pending",
         "current_page": 1,
         "max_pages": req.max_pages,
@@ -139,7 +144,8 @@ def start_extraction(req: ExtractRequest, background_tasks: BackgroundTasks):
         req.query,
         req.marketplace,
         req.max_pages,
-        req.max_reviews
+        req.max_reviews,
+        req.region_filter
     )
 
     return {
@@ -207,6 +213,10 @@ def analyze_active_tab(req: ActiveTabScanRequest):
             if req.max_reviews is not None and prod_reviews >= req.max_reviews:
                 continue
 
+            seller_country = details.get("seller_country", "Unknown")
+            if req.region_filter and not matches_region_filter(seller_country, req.region_filter):
+                continue
+
             seen_brands.add(norm_b)
             # Find decision maker and brand website contacts
             decision_maker = find_decision_maker(brand_name)
@@ -216,6 +226,11 @@ def analyze_active_tab(req: ActiveTabScanRequest):
                 "asin": asin,
                 "brand_name": brand_name,
                 "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
+                "seller_country": details.get("seller_country", "Unknown"),
+                "seller_country_display": details.get("seller_country_display", "Unknown"),
+                "seller_business_name": details.get("seller_business_name", "Not Available"),
+                "seller_address": details.get("seller_address", "Not Available"),
+                "seller_id": details.get("seller_id", ""),
                 "reviews": prod_reviews,
                 "website": brand_contacts.get("website", "Not Found"),
                 "email": brand_contacts.get("email", "Not Found"),

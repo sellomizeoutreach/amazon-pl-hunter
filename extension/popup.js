@@ -59,11 +59,20 @@ const resultsTbody = document.getElementById("results-tbody");
 const btnExportCsv = document.getElementById("btn-export-csv");
 const btnExportExcel = document.getElementById("btn-export-excel");
 
-// Review Filter Elements
+// Review & Region Filter Elements
+const regionFilter = document.getElementById("region-filter");
+const activeRegionFilter = document.getElementById("active-region-filter");
 const filterUnder100Crawl = document.getElementById("filter-under-100-crawl");
 const btnFilterUnder100 = document.getElementById("btn-filter-under-100");
 const under100Badge = document.getElementById("under-100-badge");
+const btnFilterUs = document.getElementById("btn-filter-us");
+const usBadge = document.getElementById("us-badge");
+const btnFilterNonCn = document.getElementById("btn-filter-non-cn");
+const nonCnBadge = document.getElementById("non-cn-badge");
+
 let filterUnder100Active = false;
+let filterUsActive = false;
+let filterNonCnActive = false;
 
 function parseReviewCount(val) {
   if (val === undefined || val === null) return 0;
@@ -142,6 +151,31 @@ function setupEventListeners() {
     btnFilterUnder100.addEventListener("click", () => {
       filterUnder100Active = !filterUnder100Active;
       btnFilterUnder100.classList.toggle("active", filterUnder100Active);
+      renderResults(extractedRecords);
+    });
+  }
+
+  // Region filter toggles
+  if (btnFilterUs) {
+    btnFilterUs.addEventListener("click", () => {
+      filterUsActive = !filterUsActive;
+      if (filterUsActive) {
+        filterNonCnActive = false;
+        if (btnFilterNonCn) btnFilterNonCn.classList.remove("active");
+      }
+      btnFilterUs.classList.toggle("active", filterUsActive);
+      renderResults(extractedRecords);
+    });
+  }
+
+  if (btnFilterNonCn) {
+    btnFilterNonCn.addEventListener("click", () => {
+      filterNonCnActive = !filterNonCnActive;
+      if (filterNonCnActive) {
+        filterUsActive = false;
+        if (btnFilterUs) btnFilterUs.classList.remove("active");
+      }
+      btnFilterNonCn.classList.toggle("active", filterNonCnActive);
       renderResults(extractedRecords);
     });
   }
@@ -238,6 +272,8 @@ async function startDeepCrawl() {
   showProgress("Initializing multi-page crawler...", 5);
   clearResultsTable();
 
+  const regionVal = regionFilter ? regionFilter.value : "ALL";
+
   try {
     const response = await fetch(`${BACKEND_URL}/api/extract`, {
       method: "POST",
@@ -246,7 +282,8 @@ async function startDeepCrawl() {
         query: query,
         marketplace: marketplace,
         max_pages: maxPages,
-        max_reviews: maxReviews
+        max_reviews: maxReviews,
+        region_filter: regionVal
       })
     });
 
@@ -431,6 +468,8 @@ async function processActiveTabData(data) {
     if (btnFilterUnder100) btnFilterUnder100.classList.add("active");
   }
 
+  const activeRegionVal = activeRegionFilter ? activeRegionFilter.value : "ALL";
+
   try {
     const res = await fetch(`${BACKEND_URL}/api/analyze-active-tab`, {
       method: "POST",
@@ -438,7 +477,8 @@ async function processActiveTabData(data) {
       body: JSON.stringify({
         products: data.products,
         marketplace: data.marketplace || "amazon.com",
-        max_reviews: maxReviews
+        max_reviews: maxReviews,
+        region_filter: activeRegionVal
       })
     });
 
@@ -475,15 +515,25 @@ async function processActiveTabData(data) {
 function renderResults(records, isRunning = false) {
   const allRecords = records || [];
   const under100Count = allRecords.filter(r => parseReviewCount(r.reviews) < 100).length;
-  if (under100Badge) {
-    under100Badge.innerText = under100Count;
+  const usCount = allRecords.filter(r => (r.seller_country || '').toUpperCase() === 'US').length;
+  const nonCnCount = allRecords.filter(r => !['CN', 'HK', 'UNKNOWN', ''].includes((r.seller_country || '').toUpperCase())).length;
+
+  if (under100Badge) under100Badge.innerText = under100Count;
+  if (usBadge) usBadge.innerText = usCount;
+  if (nonCnBadge) nonCnBadge.innerText = nonCnCount;
+
+  let displayRecords = [...allRecords];
+  if (filterUnder100Active) {
+    displayRecords = displayRecords.filter(r => parseReviewCount(r.reviews) < 100);
+  }
+  if (filterUsActive) {
+    displayRecords = displayRecords.filter(r => (r.seller_country || '').toUpperCase() === 'US');
+  } else if (filterNonCnActive) {
+    displayRecords = displayRecords.filter(r => !['CN', 'HK', 'UNKNOWN', ''].includes((r.seller_country || '').toUpperCase()));
   }
 
-  const displayRecords = filterUnder100Active
-    ? allRecords.filter(r => parseReviewCount(r.reviews) < 100)
-    : allRecords;
-
-  resultsCount.innerText = filterUnder100Active
+  const isFiltered = filterUnder100Active || filterUsActive || filterNonCnActive;
+  resultsCount.innerText = isFiltered
     ? `${displayRecords.length} of ${allRecords.length}`
     : `${allRecords.length}`;
   statPlCount.innerText = displayRecords.length;
@@ -495,15 +545,15 @@ function renderResults(records, isRunning = false) {
     let emptyMsg = "";
     if (isRunning) {
       emptyMsg = "⏳ Scanning Amazon products and verifying private label sellers...";
-    } else if (filterUnder100Active && allRecords.length > 0) {
-      emptyMsg = `No brands with &lt; 100 reviews found out of ${allRecords.length} extracted brands. Click "🔥 &lt; 100 Reviews" to show all.`;
+    } else if (isFiltered && allRecords.length > 0) {
+      emptyMsg = `No brands matching active filters found out of ${allRecords.length} extracted brands.`;
     } else {
       emptyMsg = "No Private Label brands found matching filters on these pages.";
     }
 
     resultsTbody.innerHTML = `
       <tr class="empty-row">
-        <td colspan="10">${emptyMsg}</td>
+        <td colspan="12">${emptyMsg}</td>
       </tr>
     `;
     btnExportCsv.disabled = allRecords.length === 0;
@@ -553,6 +603,10 @@ function renderResults(records, isRunning = false) {
       revBadge = `<span class="review-badge high" title="${revCount} reviews">${revCount.toLocaleString()}</span>`;
     }
 
+    const sellerCountry = r.seller_country || "US";
+    const sellerLegal = (r.seller_business_name && r.seller_business_name !== "Not Available") ? r.seller_business_name : (r.matched_seller || "-");
+    const sellerAddress = (r.seller_address && r.seller_address !== "Not Available") ? r.seller_address : "";
+
     html += `
       <tr>
         <td><b><a href="${r.product_url}" target="_blank" style="color:#38bdf8;text-decoration:none">${r.asin}</a></b></td>
@@ -560,6 +614,8 @@ function renderResults(records, isRunning = false) {
         <td title="Buy Box: ${escapeHtml(r.buybox_seller || '')} | Matched: ${escapeHtml(r.matched_seller || '')}">
           <span style="color:#fbbf24;font-weight:600">${escapeHtml(r.matched_seller || r.buybox_seller || "Single Seller")}</span>
         </td>
+        <td><span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;background:rgba(59,130,246,0.15);color:#93c5fd;font-weight:600;">📍 ${escapeHtml(sellerCountry)}</span></td>
+        <td title="${escapeHtml(sellerAddress)}"><span style="font-size:11px;color:#cbd5e1">${escapeHtml(sellerLegal)}</span></td>
         <td>${revBadge}</td>
         <td>${websiteBadge}</td>
         <td>${emailBadge}</td>
@@ -580,7 +636,7 @@ function clearResultsTable() {
   extractedRecords = [];
   resultsTbody.innerHTML = `
     <tr class="empty-row">
-      <td colspan="10">Hunting for Private Label brands...</td>
+      <td colspan="12">Hunting for Private Label brands...</td>
     </tr>
   `;
   statPlCount.innerText = "0";
@@ -588,6 +644,8 @@ function clearResultsTable() {
   statLinkedinCount.innerText = "0";
   resultsCount.innerText = "0";
   if (under100Badge) under100Badge.innerText = "0";
+  if (usBadge) usBadge.innerText = "0";
+  if (nonCnBadge) nonCnBadge.innerText = "0";
   btnExportCsv.disabled = true;
   btnExportExcel.disabled = true;
 }
