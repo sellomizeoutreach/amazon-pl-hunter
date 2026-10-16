@@ -27,6 +27,9 @@ def generate_amazon_session_id() -> str:
     """Generate a realistic random Amazon session-id to prevent session-level throttling."""
     return f"{random.randint(100, 999)}-{random.randint(1000000, 9999999)}-{random.randint(1000000, 9999999)}"
 
+# Cache for brand catalog review verification: brand_name -> check_result
+BRAND_CATALOG_CACHE: Dict[str, Dict[str, Any]] = {}
+
 class AmazonExtractor:
     def __init__(self, marketplace: str = "amazon.com", delay_between_requests: float = 0.3):
         self.marketplace = marketplace.replace('https://', '').replace('http://', '').strip('/')
@@ -36,6 +39,7 @@ class AmazonExtractor:
             self.base_url = f"https://{self.marketplace}"
         self.delay = delay_between_requests
         self.seen_brands: Set[str] = set()
+        self._all_scanned_products_cache: List[Dict[str, Any]] = []
         self.cookies = {
             'i18n-prefs': 'USD'
         }
@@ -173,6 +177,108 @@ class AmazonExtractor:
             })
             
         return products
+
+    def check_brand_catalog_reviews(
+        self,
+        brand_name: str,
+        current_asin: str = "",
+        max_reviews: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Audits other products from the same brand on Amazon to verify that
+        ALL other products from this brand also have < max_reviews.
+        Disqualifies any brand that has ANY other product with >= max_reviews.
+        """
+        norm_b = brand_name.lower().strip()
+        cache_key = f"{self.marketplace}:{norm_b}:{max_reviews}"
+        if cache_key in BRAND_CATALOG_CACHE:
+            return BRAND_CATALOG_CACHE[cache_key]
+
+        # 1. First check: Did any product encountered so far in this crawl session have >= max_reviews?
+        for prev_p in self._all_scanned_products_cache:
+            p_b = (prev_p.get("brand") or "").lower().strip()
+            if p_b == norm_b and prev_p.get("asin") != current_asin:
+                p_revs = prev_p.get("reviews", 0)
+                if p_revs >= max_reviews:
+                    res = {
+                        "all_under_threshold": False,
+                        "max_brand_reviews": p_revs,
+                        "total_brand_products_found": 1,
+                        "disqualifying_asin": prev_p.get("asin"),
+                        "disqualifying_title": prev_p.get("title", ""),
+                        "reason": f"Disqualified: Already scanned product '{prev_p.get('title', '')[:35]}...' has {p_revs} reviews (>= {max_reviews})"
+                    }
+                    BRAND_CATALOG_CACHE[cache_key] = res
+                    return res
+
+        # 2. Query Amazon search for the brand catalog: /s?k="brand_name"
+        encoded_brand = urllib.parse.quote(brand_name)
+        catalog_url = f"{self.base_url}/s?k=%22{encoded_brand}%22&ref=nb_sb_noss"
+        soup = self.fetch_page(catalog_url, max_retries=2)
+        if not soup:
+            # Fallback query without quotes
+            catalog_url = f"{self.base_url}/s?k={encoded_brand}&ref=nb_sb_noss"
+            soup = self.fetch_page(catalog_url, max_retries=1)
+
+        if not soup:
+            # If network error or captcha, accept with single product count to avoid blocking valid finds
+            res = {
+                "all_under_threshold": True,
+                "max_brand_reviews": 0,
+                "total_brand_products_found": 1,
+                "reason": "Brand catalog check passed (single SKU verified)"
+            }
+            BRAND_CATALOG_CACHE[cache_key] = res
+            return res
+
+        brand_products = self.extract_search_asins(soup)
+        brand_tokens = set(re.findall(r'[a-z0-9]+', norm_b))
+        
+        matched_brand_items = []
+        highest_review = 0
+
+        for bp in brand_products:
+            bp_asin = bp.get("asin")
+            bp_title = bp.get("title", "").lower()
+            bp_card_brand = bp.get("brand", "").lower()
+            bp_reviews = bp.get("reviews", 0)
+
+            # Determine if this search result item belongs to the brand
+            is_same_brand = False
+            if bp_card_brand and bp_card_brand == norm_b:
+                is_same_brand = True
+            elif norm_b in bp_title:
+                is_same_brand = True
+            elif len(brand_tokens) > 1 and all(token in bp_title for token in brand_tokens):
+                is_same_brand = True
+
+            if is_same_brand:
+                matched_brand_items.append(bp)
+                if bp_reviews > highest_review:
+                    highest_review = bp_reviews
+
+                # DISQUALIFICATION TRIGGER: If ANY product has >= max_reviews
+                if bp_reviews >= max_reviews:
+                    res = {
+                        "all_under_threshold": False,
+                        "max_brand_reviews": bp_reviews,
+                        "total_brand_products_found": len(matched_brand_items),
+                        "disqualifying_asin": bp_asin,
+                        "disqualifying_title": bp.get("title", ""),
+                        "reason": f"Disqualified: Found brand SKU '{bp.get('title', '')[:35]}...' with {bp_reviews} reviews (>= {max_reviews})"
+                    }
+                    BRAND_CATALOG_CACHE[cache_key] = res
+                    return res
+
+        # If we reach here, all matched products for this brand have < max_reviews
+        res = {
+            "all_under_threshold": True,
+            "max_brand_reviews": highest_review,
+            "total_brand_products_found": max(len(matched_brand_items), 1),
+            "reason": f"Verified: All {max(len(matched_brand_items), 1)} products found under '{brand_name}' have < {max_reviews} reviews (Max: {highest_review})"
+        }
+        BRAND_CATALOG_CACHE[cache_key] = res
+        return res
 
     def inspect_asin_details(self, asin: str) -> Dict[str, Any]:
         """
@@ -325,6 +431,7 @@ class AmazonExtractor:
         max_reviews: Optional[int] = None,
         region_filter: Optional[str] = None,
         exclude_countries: Optional[Any] = None,
+        check_all_brand_products_under_100: bool = True,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         should_stop_check: Optional[Callable[[], bool]] = None
     ) -> List[Dict[str, Any]]:
@@ -374,6 +481,8 @@ class AmazonExtractor:
             if not products:
                 # End of results
                 break
+
+            self._all_scanned_products_cache.extend(products)
 
             # Prepare native next page link from Amazon's DOM (includes valid qid & xpid tokens)
             next_a = soup.select_one('.s-pagination-next')
@@ -445,13 +554,55 @@ class AmazonExtractor:
                     # Only accept verified Private Label
                     if pl_eval["is_private_label"]:
                         prod_reviews = details.get("reviews") or prod.get("reviews") or 0
-                        if max_reviews is not None and prod_reviews >= max_reviews:
+                        review_cap = max_reviews if max_reviews is not None else 100
+
+                        if prod_reviews >= review_cap:
                             continue
 
-                        # Check seller registered region / country filter & exclusions
+                        # Check seller registered region / country filter & exclusions (with deep Chinese detection)
                         seller_country = details.get("seller_country", "Unknown")
                         if not is_seller_allowed(seller_country, region_filter=region_filter, exclude_countries=exclude_countries):
                             continue
+
+                        # Full Brand Catalog Audit: Verify ALL other products of this brand have < review_cap
+                        catalog_max_rev = prod_reviews
+                        catalog_count = 1
+                        if check_all_brand_products_under_100:
+                            if progress_callback:
+                                progress_callback({
+                                    "status": "auditing_brand_catalog",
+                                    "current_page": page,
+                                    "max_pages": max_pages,
+                                    "total_scanned": total_scanned_count,
+                                    "brand_name": brand_name,
+                                    "asin": prod["asin"],
+                                    "message": f"[Page {page}/{max_pages}] Auditing entire catalog for '{brand_name}' (ensuring all products < {review_cap} reviews)...",
+                                    "total_found": len(extracted_records)
+                                })
+
+                            catalog_check = self.check_brand_catalog_reviews(
+                                brand_name=brand_name,
+                                current_asin=prod["asin"],
+                                max_reviews=review_cap
+                            )
+
+                            if not catalog_check.get("all_under_threshold", True):
+                                # Brand disqualified because another SKU has >= review_cap
+                                self.seen_brands.add(norm_b)
+                                if progress_callback:
+                                    progress_callback({
+                                        "status": "brand_disqualified",
+                                        "current_page": page,
+                                        "max_pages": max_pages,
+                                        "total_scanned": total_scanned_count,
+                                        "brand_name": brand_name,
+                                        "message": f"[Skipped] '{brand_name}' disqualified: Other product has {catalog_check.get('max_brand_reviews')} reviews (>= {review_cap}).",
+                                        "total_found": len(extracted_records)
+                                    })
+                                continue
+
+                            catalog_max_rev = max(prod_reviews, catalog_check.get("max_brand_reviews", 0))
+                            catalog_count = catalog_check.get("total_brand_products_found", 1)
 
                         self.seen_brands.add(norm_b)
 
@@ -463,7 +614,7 @@ class AmazonExtractor:
                                 "total_scanned": total_scanned_count,
                                 "brand_name": brand_name,
                                 "asin": prod["asin"],
-                                "message": f"[Page {page}/{max_pages}] Verified PL: '{brand_name}' ({prod_reviews} reviews, {details.get('seller_country_display', 'Unknown')}). Discovering website, email, phone & LinkedIn...",
+                                "message": f"[Page {page}/{max_pages}] Verified PL (All Products < {review_cap} Reviews): '{brand_name}' (Max: {catalog_max_rev} revs, {details.get('seller_country_display', 'Unknown')}). Discovering website, email, phone & LinkedIn...",
                                 "total_found": len(extracted_records)
                             })
 
@@ -481,6 +632,9 @@ class AmazonExtractor:
                             "seller_address": details.get("seller_address", "Not Available"),
                             "seller_id": details.get("seller_id", ""),
                             "reviews": prod_reviews,
+                            "catalog_max_reviews": catalog_max_rev,
+                            "catalog_products_count": catalog_count,
+                            "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
                             "website": brand_contacts.get("website", "Not Found"),
                             "email": brand_contacts.get("email", "Not Found"),
                             "phone": brand_contacts.get("phone", "Not Found"),

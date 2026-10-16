@@ -36,6 +36,7 @@ class ExtractRequest(BaseModel):
     max_reviews: Optional[int] = Field(default=None, description="Optional maximum review count limit, e.g. 100")
     region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
     exclude_countries: Optional[Any] = Field(default=None, description="Optional list or comma-separated string of countries to exclude, e.g. ['CN', 'HK']")
+    check_all_brand_products_under_100: bool = Field(default=True, description="Verify that ALL products from the brand have < max_reviews")
 
 class DirectProductScanItem(BaseModel):
     asin: str
@@ -51,8 +52,9 @@ class ActiveTabScanRequest(BaseModel):
     max_reviews: Optional[int] = Field(default=None, description="Optional maximum review count limit, e.g. 100")
     region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
     exclude_countries: Optional[Any] = Field(default=None, description="Optional countries to exclude, e.g. ['CN', 'HK']")
+    check_all_brand_products_under_100: bool = Field(default=True, description="Verify that ALL products from the brand have < max_reviews")
 
-def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages: int, max_reviews: Optional[int] = None, region_filter: Optional[str] = None, exclude_countries: Optional[Any] = None):
+def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages: int, max_reviews: Optional[int] = None, region_filter: Optional[str] = None, exclude_countries: Optional[Any] = None, check_all_brand_products_under_100: bool = True):
     """Worker function that runs the extraction job in background."""
     job = JOBS.get(job_id)
     if not job:
@@ -91,6 +93,7 @@ def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages
             max_reviews=max_reviews,
             region_filter=region_filter,
             exclude_countries=exclude_countries,
+            check_all_brand_products_under_100=check_all_brand_products_under_100,
             progress_callback=progress_callback,
             should_stop_check=should_stop
         )
@@ -150,7 +153,8 @@ def start_extraction(req: ExtractRequest, background_tasks: BackgroundTasks):
         req.max_pages,
         req.max_reviews,
         req.region_filter,
-        req.exclude_countries
+        req.exclude_countries,
+        req.check_all_brand_products_under_100
     )
 
     return {
@@ -222,6 +226,22 @@ def analyze_active_tab(req: ActiveTabScanRequest):
             if not is_seller_allowed(seller_country, region_filter=req.region_filter, exclude_countries=req.exclude_countries):
                 continue
 
+            # Full Brand Catalog Audit: Verify ALL other products of this brand have < review_cap
+            catalog_max_rev = prod_reviews
+            catalog_count = 1
+            if req.check_all_brand_products_under_100:
+                review_cap = req.max_reviews if req.max_reviews is not None else 100
+                catalog_check = extractor.check_brand_catalog_reviews(
+                    brand_name=brand_name,
+                    current_asin=asin,
+                    max_reviews=review_cap
+                )
+                if not catalog_check.get("all_under_threshold", True):
+                    seen_brands.add(norm_b)
+                    continue
+                catalog_max_rev = max(prod_reviews, catalog_check.get("max_brand_reviews", 0))
+                catalog_count = catalog_check.get("total_brand_products_found", 1)
+
             seen_brands.add(norm_b)
             # Find decision maker and brand website contacts
             decision_maker = find_decision_maker(brand_name)
@@ -237,6 +257,9 @@ def analyze_active_tab(req: ActiveTabScanRequest):
                 "seller_address": details.get("seller_address", "Not Available"),
                 "seller_id": details.get("seller_id", ""),
                 "reviews": prod_reviews,
+                "catalog_max_reviews": catalog_max_rev,
+                "catalog_products_count": catalog_count,
+                "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
                 "website": brand_contacts.get("website", "Not Found"),
                 "email": brand_contacts.get("email", "Not Found"),
                 "phone": brand_contacts.get("phone", "Not Found"),

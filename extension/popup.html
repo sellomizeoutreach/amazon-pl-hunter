@@ -91,7 +91,13 @@
       <div class="form-row filter-row">
         <label class="checkbox-container" for="filter-under-100-crawl">
           <input type="checkbox" id="filter-under-100-crawl" />
-          <span class="checkbox-text">🔥 Only extract brands with <b>&lt; 100 reviews</b> (Low Competition PL)</span>
+          <span class="checkbox-text">🔥 Only extract brands with <b>&lt; 100 reviews</b></span>
+        </label>
+      </div>
+      <div class="form-row filter-row" style="margin-top: 4px;">
+        <label class="checkbox-container" for="audit-all-products-crawl">
+          <input type="checkbox" id="audit-all-products-crawl" checked />
+          <span class="checkbox-text">🛡️ Catalog Audit: Ensure <b>ALL products</b> from brand have &lt; 100 reviews</span>
         </label>
       </div>
 
@@ -118,7 +124,7 @@
           <option value="CA">🇨🇦 Canada (CA Only)</option>
         </select>
       </div>
-      <div class="form-group" style="margin-bottom:12px;">
+      <div class="form-group" style="margin-bottom:8px;">
         <label for="active-exclude-country-filter">🚫 Exclude Sellers From:</label>
         <select id="active-exclude-country-filter">
           <option value="" selected>None (Search All)</option>
@@ -127,6 +133,12 @@
           <option value="GB,DE,FR,IT,ES">🚫 Exclude UK & Europe</option>
           <option value="UNKNOWN">🚫 Exclude Unknown Address</option>
         </select>
+      </div>
+      <div class="form-row filter-row" style="margin-bottom: 10px;">
+        <label class="checkbox-container" for="audit-all-products-active">
+          <input type="checkbox" id="audit-all-products-active" checked />
+          <span class="checkbox-text">🛡️ Ensure <b>ALL brand products</b> have &lt; 100 reviews</span>
+        </label>
       </div>
       <button id="btn-scan-tab" class="primary-btn secondary-style">
         <span class="btn-icon">⚡</span> Extract from Active Tab

@@ -433,6 +433,12 @@ with tab_single:
             help="Pre-filters crawler: only saves brands whose listings have less than 100 reviews.",
             key="chk_single_100"
         )
+        single_check_all_under_100 = st.checkbox(
+            "🛡️ Audit Brand: All Products < 100 Revs",
+            value=True,
+            help="Audits other products of this brand on Amazon. Disqualifies the brand if ANY other product has >= 100 reviews.",
+            key="chk_single_all_under_100"
+        )
 
     single_exclude_sel = st.multiselect(
         "🚫 Exclude Sellers From (Countries to Skip / Unselect):",
@@ -485,6 +491,7 @@ with tab_single:
                     max_reviews=max_rev,
                     region_filter=single_region,
                     exclude_countries=single_exclude_codes,
+                    check_all_brand_products_under_100=single_check_all_under_100,
                     progress_callback=single_progress,
                     should_stop_check=lambda: st.session_state.should_stop
                 )
@@ -540,6 +547,7 @@ with tab_bulk:
             bulk_kw_exclude = st.multiselect("🚫 Exclude Sellers From:", options=list(EXCLUDE_COUNTRY_CHOICES.keys()), default=[], key="multisel_bulk_kw_exclude")
             bulk_kw_exclude_codes = [EXCLUDE_COUNTRY_CHOICES[k] for k in bulk_kw_exclude]
             bulk_kw_filter_100 = st.checkbox("🔥 Only Extract < 100 Review Brands", value=False)
+            bulk_kw_check_all_under_100 = st.checkbox("🛡️ Audit Brand: All Products < 100 Revs", value=True, key="chk_bulk_kw_all_under_100")
             btn_start_bulk_kw = st.button("🚀 Start Bulk Keyword Hunt", type="primary", use_container_width=True, disabled=st.session_state.is_running)
 
         if btn_start_bulk_kw:
@@ -575,6 +583,7 @@ with tab_bulk:
                                 max_reviews=max_rev,
                                 region_filter=bulk_kw_region,
                                 exclude_countries=bulk_kw_exclude_codes,
+                                check_all_brand_products_under_100=bulk_kw_check_all_under_100,
                                 should_stop_check=lambda: st.session_state.should_stop
                             )
                         except Exception as kw_err:
@@ -625,6 +634,7 @@ with tab_bulk:
             bulk_asin_region = REGION_OPTIONS[bulk_asin_region_lbl]
             bulk_asin_exclude = st.multiselect("🚫 Exclude Sellers From:", options=list(EXCLUDE_COUNTRY_CHOICES.keys()), default=[], key="multisel_bulk_asin_exclude")
             bulk_asin_exclude_codes = [EXCLUDE_COUNTRY_CHOICES[k] for k in bulk_asin_exclude]
+            bulk_asin_check_all_under_100 = st.checkbox("🛡️ Audit Brand: All Products < 100 Revs", value=True, key="chk_bulk_asin_all_under_100")
             btn_start_bulk_asin = st.button("🔍 Run Bulk ASIN Audit", type="primary", use_container_width=True)
         
         if btn_start_bulk_asin:
@@ -661,6 +671,16 @@ with tab_bulk:
                         if not is_seller_allowed(details.get("seller_country", "Unknown"), region_filter=bulk_asin_region, exclude_countries=bulk_asin_exclude_codes):
                             return None
                         
+                        prod_rev = int(details.get("reviews") or 0)
+                        catalog_max_rev = prod_rev
+                        catalog_count = 1
+                        if bulk_asin_check_all_under_100:
+                            cat_check = extractor.check_brand_catalog_reviews(b_name, current_asin=asin, max_reviews=100)
+                            if not cat_check.get("all_under_threshold", True):
+                                return None
+                            catalog_max_rev = max(prod_rev, cat_check.get("max_brand_reviews", 0))
+                            catalog_count = cat_check.get("total_brand_products_found", 1)
+                        
                         decision_maker = find_decision_maker(b_name)
                         brand_contacts = find_brand_website_and_contacts(b_name)
                         return {
@@ -672,7 +692,10 @@ with tab_bulk:
                             "seller_business_name": details.get("seller_business_name", "Not Available"),
                             "seller_address": details.get("seller_address", "Not Available"),
                             "seller_id": details.get("seller_id", ""),
-                            "reviews": int(details.get("reviews") or 0),
+                            "reviews": prod_rev,
+                            "catalog_max_reviews": catalog_max_rev,
+                            "catalog_products_count": catalog_count,
+                            "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
                             "website": brand_contacts.get("website", "Not Found"),
                             "email": brand_contacts.get("email", "Not Found"),
                             "phone": brand_contacts.get("phone", "Not Found"),
@@ -730,6 +753,7 @@ if st.session_state.active_results:
     websites_total = len(df_raw[df_raw["website"].str.lower() != "not found"]) if "website" in df_raw else 0
     emails_total = len(df_raw[df_raw["email"].str.lower() != "not found"]) if "email" in df_raw else 0
     phones_total = len(df_raw[df_raw["phone"].str.lower() != "not found"]) if "phone" in df_raw else 0
+    verified_all_under_100_total = len(df_raw[df_raw["all_products_under_100"].astype(str).str.contains("Verified", case=False, na=False)]) if "all_products_under_100" in df_raw else 0
     founders_total = len(df_raw[df_raw["founder_name"].str.lower() != "not found"]) if "founder_name" in df_raw else 0
 
     m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
@@ -757,6 +781,7 @@ if st.session_state.active_results:
             "Quick Filter:",
             options=[
                 "All Brands",
+                f"🛡️ All Brand SKUs < 100 Revs ({verified_all_under_100_total})",
                 f"🔥 Less than 100 Reviews ({under_100_total})",
                 f"🛡️ Exclude China / HK ({non_cn_total})",
                 f"🇺🇸 US Registered Sellers ({us_total})",
@@ -794,7 +819,12 @@ if st.session_state.active_results:
         )
 
     df_filtered = df_raw.copy()
-    if "Less than 100 Reviews" in filter_mode:
+    if "All Brand SKUs < 100 Revs" in filter_mode:
+        if "all_products_under_100" in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered["all_products_under_100"].astype(str).str.contains("Verified", case=False, na=False)]
+        else:
+            df_filtered = df_filtered[df_filtered["reviews"] < 100]
+    elif "Less than 100 Reviews" in filter_mode:
         df_filtered = df_filtered[df_filtered["reviews"] < 100]
     elif "Exclude China / HK" in filter_mode:
         df_filtered = df_filtered[~df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK"])]

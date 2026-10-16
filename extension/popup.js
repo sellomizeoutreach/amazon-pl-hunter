@@ -287,6 +287,8 @@ async function startDeepCrawl() {
   const regionVal = regionFilter ? regionFilter.value : "ALL";
   const excludeVal = excludeCountryFilter ? excludeCountryFilter.value : "";
   const excludeList = excludeVal ? excludeVal.split(",").map(x => x.trim()).filter(Boolean) : [];
+  const auditAllEl = document.getElementById("audit-all-products-crawl");
+  const checkAllBrandUnder100 = auditAllEl ? auditAllEl.checked : true;
 
   try {
     const response = await fetch(`${BACKEND_URL}/api/extract`, {
@@ -298,7 +300,8 @@ async function startDeepCrawl() {
         max_pages: maxPages,
         max_reviews: maxReviews,
         region_filter: regionVal,
-        exclude_countries: excludeList
+        exclude_countries: excludeList,
+        check_all_brand_products_under_100: checkAllBrandUnder100
       })
     });
 
@@ -486,6 +489,8 @@ async function processActiveTabData(data) {
   const activeRegionVal = activeRegionFilter ? activeRegionFilter.value : "ALL";
   const activeExcludeVal = activeExcludeCountryFilter ? activeExcludeCountryFilter.value : "";
   const activeExcludeList = activeExcludeVal ? activeExcludeVal.split(",").map(x => x.trim()).filter(Boolean) : [];
+  const activeAuditEl = document.getElementById("audit-all-products-active");
+  const checkAllBrandUnder100 = activeAuditEl ? activeAuditEl.checked : true;
 
   try {
     const res = await fetch(`${BACKEND_URL}/api/analyze-active-tab`, {
@@ -496,7 +501,8 @@ async function processActiveTabData(data) {
         marketplace: data.marketplace || "amazon.com",
         max_reviews: maxReviews,
         region_filter: activeRegionVal,
-        exclude_countries: activeExcludeList
+        exclude_countries: activeExcludeList,
+        check_all_brand_products_under_100: checkAllBrandUnder100
       })
     });
 
@@ -625,6 +631,11 @@ function renderResults(records, isRunning = false) {
       revBadge = `<span class="review-badge high" title="${revCount} reviews">${revCount.toLocaleString()}</span>`;
     }
 
+    let catalogBadge = "";
+    if (r.all_products_under_100 && String(r.all_products_under_100).includes("Verified")) {
+      catalogBadge = `<div style="font-size:9px;color:#10b981;font-weight:700;margin-top:2px;" title="Catalog Audit: All products under 100 reviews (Highest SKU: ${r.catalog_max_reviews || revCount} revs)">🛡️ All &lt; 100</div>`;
+    }
+
     const sellerCountry = r.seller_country || "US";
     const sellerLegal = (r.seller_business_name && r.seller_business_name !== "Not Available") ? r.seller_business_name : (r.matched_seller || "-");
     const sellerAddress = (r.seller_address && r.seller_address !== "Not Available") ? r.seller_address : "";
@@ -638,7 +649,7 @@ function renderResults(records, isRunning = false) {
         </td>
         <td><span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;background:rgba(59,130,246,0.15);color:#93c5fd;font-weight:600;">📍 ${escapeHtml(sellerCountry)}</span></td>
         <td title="${escapeHtml(sellerAddress)}"><span style="font-size:11px;color:#cbd5e1">${escapeHtml(sellerLegal)}</span></td>
-        <td>${revBadge}</td>
+        <td>${revBadge}${catalogBadge}</td>
         <td>${websiteBadge}</td>
         <td>${emailBadge}</td>
         <td>${phoneBadge}</td>

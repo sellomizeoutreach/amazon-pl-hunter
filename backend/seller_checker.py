@@ -60,6 +60,262 @@ COUNTRY_FLAGS = {
     "KR": "KR",
 }
 
+# ============================================================================
+# COMPREHENSIVE CHINESE SELLER IDENTIFICATION DATA (Provinces, Cities, Pinyin)
+# ============================================================================
+
+CHINESE_PROVINCES = {
+    "guangdong", "guang dong", "canton", "kwangtung",
+    "zhejiang", "zhe jiang", "chekiang",
+    "fujian", "fu jian", "fukien",
+    "jiangsu", "jiang su", "kiangsu",
+    "shandong", "shan dong", "shantung",
+    "henan", "he nan", "honan",
+    "sichuan", "si chuan", "szechwan", "szechuan",
+    "hunan", "hu nan",
+    "hubei", "hu bei", "hupeh",
+    "hebei", "he bei", "hopeh",
+    "anhui", "an hui", "anhwei",
+    "jiangxi", "jiang xi", "kiangsi",
+    "shaanxi", "shaan xi", "shensi",
+    "shanxi", "shan xi", "shansi",
+    "liaoning", "liao ning",
+    "jilin", "ji lin", "kirin",
+    "heilongjiang", "hei long jiang", "heilungkiang",
+    "guizhou", "gui zhou", "kweichow",
+    "yunnan", "yun nan",
+    "guangxi", "guang xi", "kwangsi",
+    "hainan", "hai nan",
+    "ningxia", "ning xia",
+    "xinjiang", "xin jiang", "sinkiang",
+    "qinghai", "qing hai", "tsinghai",
+    "gansu", "gan su", "kansu",
+    "inner mongolia", "neimenggu", "nei mongol",
+    "tibet", "xizang",
+    "beijing", "bei jing", "peking",
+    "shanghai", "shang hai",
+    "tianjin", "tian jin", "tientsin",
+    "chongqing", "chong qing", "chungking",
+}
+
+CHINESE_CITIES = {
+    # Guangdong
+    "shenzhen", "guangzhou", "dongguan", "foshan", "huizhou", "zhongshan", "zhuhai",
+    "shantou", "jiangmen", "jieyang", "chaozhou", "zhanjiang", "maoming", "zhaoqing",
+    "meizhou", "shanwei", "heyuan", "yangjiang", "qingyuan", "shaoguan", "yunfu",
+    # Zhejiang
+    "hangzhou", "yiwu", "ningbo", "wenzhou", "jinhua", "shaoxing", "taizhou",
+    "jiaxing", "huzhou", "quzhou", "zhoushan", "lishui", "yuyao", "cixi", "cangnan",
+    # Fujian
+    "xiamen", "fuzhou", "quanzhou", "putian", "zhangzhou", "nanping", "longyan",
+    "sanming", "ningde", "jinjiang", "shishi", "dehua", "anxi",
+    # Jiangsu
+    "suzhou", "nanjing", "wuxi", "changzhou", "nantong", "yangzhou", "xuzhou",
+    "yancheng", "zhenjiang", "huaian", "huai'an", "lianyungang", "suqian", "kunshan",
+    "changshu", "zhangjiagang", "taicang", "jiangyin", "yixing",
+    # Shandong
+    "qingdao", "jinan", "yantai", "weihai", "weifang", "linyi", "zibo", "jining",
+    "tai'an", "taian", "dezhou", "liaocheng", "binzhou", "heze", "rizhao", "dongying",
+    # Henan
+    "zhengzhou", "luoyang", "nanyang", "xinxiang", "anyang", "xuchang", "pingdingshan",
+    "kaifeng", "jiaozuo", "shangqiu", "zhoukou", "zhumadian", "xinyang", "puyang",
+    # Sichuan
+    "chengdu", "mianyang", "deyang", "yibin", "nanchong", "luzhou", "leshan", "zigong",
+    # Hubei
+    "wuhan", "yichang", "xiangyang", "jingzhou", "huanggang", "xiaogan", "huangshi",
+    # Hunan
+    "changsha", "zhuzhou", "xiangtan", "hengyang", "yueyang", "changde", "chenzhou",
+    # Shaanxi & Shanxi
+    "xi'an", "xian", "baoji", "xianyang", "weinan", "hanzhong", "yulin", "taiyuan", "datong",
+    # Hebei
+    "shijiazhuang", "baoding", "tangshan", "cangzhou", "handan", "xingtai", "langfang",
+    "qinhuangdao", "hengshui", "zhangjiakou", "chengde",
+    # Anhui
+    "hefei", "wuhu", "bengbu", "anqing", "fuyang", "chuzhou", "ma'anshan", "maanshan", "lu'an",
+    # Jiangxi
+    "nanchang", "ganzhou", "jiujiang", "shangrao", "yichun", "ji'an", "jian", "pingxiang", "jingdezhen",
+    # Northeast
+    "shenyang", "dalian", "anshan", "fushun", "harbin", "daqing", "qiqihar", "changchun", "jilin",
+    # Southwest & Northwest
+    "kunming", "guiyang", "nanning", "guilin", "haikou", "sanya", "hohhot", "urumqi", "yinchuan", "xining", "lanzhou"
+}
+
+CHINESE_DISTRICTS = {
+    "baoan", "bao'an", "longgang", "futian", "nanshan", "luohu", "longhua", "guangming", "pingshan", "yantian",
+    "tianhe", "baiyun", "yuexiu", "haizhu", "panyu", "huangpu", "huadu", "conghua", "zengcheng", "nansha",
+    "choucheng", "beiyuan", "jiangdong", "choujiang", "fotang", "shangxi", "yiting",
+    "binjiang", "xiaoshan", "yuhang", "xihu", "gongshu", "shangcheng",
+    "siming", "huli", "jimei", "haicang", "tong'an", "tongan", "xiang'an", "xiangan",
+    "wujin", "gusu", "wuzhong", "xiangcheng", "jiangning", "pukou", "qixia", "yuhuatai"
+}
+
+CHINESE_CORP_KEYWORDS = {
+    "youxian gongsi", "youxiangongsi", "keji youxian", "maoyi youxian",
+    "dianzi shangwu", "dianshang", "gongsi", "keji", "maoyi", "shiye",
+    "youxian", "gongcheng", "zhizao", "fuzhuang", "piju", "xiangbao"
+}
+
+HONG_KONG_KEYWORDS = {
+    "hong kong", "hongkong", "kowloon", "new territories", "mong kok",
+    "tsim sha tsui", "wan chai", "central", "kwun tong", "sha tin", "tsuen wan", "admiralty"
+}
+
+def detect_seller_country(business_name: str, address_lines: list, full_text: str = "") -> Dict[str, str]:
+    """
+    Exhaustively detects the seller's true registered country, even when business names
+    are in English or Amazon's address field omits explicit country codes.
+    """
+    b_name = (business_name or "").strip()
+    addr_str = " ".join(address_lines or []).strip()
+    full_sample = f"{b_name} {addr_str} {full_text}".lower()
+
+    # 1. Check for Chinese Characters (Unicode range \u4e00-\u9fff)
+    if re.search(r'[\u4e00-\u9fff]', full_sample):
+        return {
+            "country_code": "CN",
+            "country_name": "China",
+            "display": "🇨🇳 China",
+            "detected_origin": "Chinese Characters Identified"
+        }
+
+    # 2. Check for explicit Hong Kong markers
+    for hk_term in HONG_KONG_KEYWORDS:
+        if re.search(rf'\b{re.escape(hk_term)}\b', full_sample):
+            return {
+                "country_code": "HK",
+                "country_name": "Hong Kong",
+                "display": "🇭🇰 Hong Kong",
+                "detected_origin": f"Hong Kong ({hk_term.title()})"
+            }
+
+    # 3. Check for explicit China country markers
+    if re.search(r'\b(cn|china|people\'s republic of china|prc|p\.r\. china|p\.r\.c\.)\b', full_sample):
+        matched_city = None
+        for c in CHINESE_CITIES:
+            if re.search(rf'\b{re.escape(c)}\b', full_sample):
+                matched_city = c.title()
+                break
+        matched_prov = None
+        for p in CHINESE_PROVINCES:
+            if re.search(rf'\b{re.escape(p)}\b', full_sample):
+                matched_prov = p.title()
+                break
+        detail = f" ({matched_city or matched_prov})" if (matched_city or matched_prov) else ""
+        return {
+            "country_code": "CN",
+            "country_name": "China",
+            "display": f"🇨🇳 China{detail}",
+            "detected_origin": f"China {matched_prov or ''} {matched_city or ''}".strip()
+        }
+
+    # 4. Check for Chinese Provinces (in business name, address lines, or full text)
+    for prov in CHINESE_PROVINCES:
+        if re.search(rf'\b{re.escape(prov)}\b', full_sample):
+            matched_city = None
+            for c in CHINESE_CITIES:
+                if re.search(rf'\b{re.escape(c)}\b', full_sample):
+                    matched_city = c.title()
+                    break
+            detail = f" ({matched_city or prov.title()})"
+            return {
+                "country_code": "CN",
+                "country_name": "China",
+                "display": f"🇨🇳 China{detail}",
+                "detected_origin": f"Guaranteed CN ({prov.title()})"
+            }
+
+    # 5. Check for Chinese Cities (in business name or address)
+    for city in CHINESE_CITIES:
+        if re.search(rf'\b{re.escape(city)}\b', full_sample):
+            return {
+                "country_code": "CN",
+                "country_name": "China",
+                "display": f"🇨🇳 China ({city.title()})",
+                "detected_origin": f"Guaranteed CN ({city.title()})"
+            }
+
+    # 6. Check for Pinyin City/Province suffix patterns: e.g. "shenzhenshi", "guangdongsheng"
+    pinyin_suffix_match = re.search(r'\b([a-z]{3,15})(shi|sheng)\b', full_sample)
+    if pinyin_suffix_match:
+        stem = pinyin_suffix_match.group(1).title()
+        return {
+            "country_code": "CN",
+            "country_name": "China",
+            "display": f"🇨🇳 China ({stem})",
+            "detected_origin": f"Pinyin Admin Division ({stem})"
+        }
+
+    # 7. Check for Chinese district tokens: e.g. "Baoan Qu", "Longgang", "Tianhe", "Choucheng"
+    for dist in CHINESE_DISTRICTS:
+        if re.search(rf'\b{re.escape(dist)}\b', full_sample):
+            return {
+                "country_code": "CN",
+                "country_name": "China",
+                "display": f"🇨🇳 China ({dist.title()})",
+                "detected_origin": f"Chinese District ({dist.title()})"
+            }
+
+    # 8. Check for Chinese corporate keywords: e.g. "youxian gongsi", "keji", "maoyi"
+    for corp_kw in CHINESE_CORP_KEYWORDS:
+        if re.search(rf'\b{re.escape(corp_kw)}\b', full_sample):
+            return {
+                "country_code": "CN",
+                "country_name": "China",
+                "display": "🇨🇳 China",
+                "detected_origin": f"Chinese Entity Naming ({corp_kw})"
+            }
+
+    # 9. Check for Chinese 6-digit postal code pattern (e.g. 518000, 310000, 322000, 510000)
+    for line in address_lines:
+        line_clean = line.strip().upper()
+        if re.search(r'\b[1-8]\d{5}\b', line_clean):
+            if not any(us_state in line_clean for us_state in [" US", " USA", "UNITED STATES"]):
+                return {
+                    "country_code": "CN",
+                    "country_name": "China",
+                    "display": "🇨🇳 China",
+                    "detected_origin": "Chinese Postal Code"
+                }
+
+    # 10. Check other countries
+    raw_country = address_lines[-1].strip().upper() if address_lines else "Unknown"
+
+    if re.search(r'\b(united states|usa|u\.s\.a\.|u\.s\.|us)\b', raw_country.lower()) or raw_country in ["US", "USA"]:
+        return {"country_code": "US", "country_name": "United States", "display": "🇺🇸 United States", "detected_origin": "US"}
+    elif re.search(r'\b(united kingdom|great britain|england|scotland|wales|uk|gb)\b', raw_country.lower()) or raw_country in ["GB", "UK"]:
+        return {"country_code": "GB", "country_name": "United Kingdom", "display": "🇬🇧 United Kingdom", "detected_origin": "GB"}
+    elif re.search(r'\b(germany|deutschland|de)\b', raw_country.lower()) or raw_country == "DE":
+        return {"country_code": "DE", "country_name": "Germany", "display": "🇩🇪 Germany", "detected_origin": "DE"}
+    elif re.search(r'\b(canada|ca)\b', raw_country.lower()) or raw_country == "CA":
+        return {"country_code": "CA", "country_name": "Canada", "display": "🇨🇦 Canada", "detected_origin": "CA"}
+    elif re.search(r'\b(france|fr)\b', raw_country.lower()) or raw_country == "FR":
+        return {"country_code": "FR", "country_name": "France", "display": "🇫🇷 France", "detected_origin": "FR"}
+    elif re.search(r'\b(italy|italia|it)\b', raw_country.lower()) or raw_country == "IT":
+        return {"country_code": "IT", "country_name": "Italy", "display": "🇮🇹 Italy", "detected_origin": "IT"}
+    elif re.search(r'\b(spain|espana|es)\b', raw_country.lower()) or raw_country == "ES":
+        return {"country_code": "ES", "country_name": "Spain", "display": "🇪🇸 Spain", "detected_origin": "ES"}
+    elif re.search(r'\b(australia|au)\b', raw_country.lower()) or raw_country == "AU":
+        return {"country_code": "AU", "country_name": "Australia", "display": "🇦🇺 Australia", "detected_origin": "AU"}
+    elif re.search(r'\b(india|in)\b', raw_country.lower()) or raw_country == "IN":
+        return {"country_code": "IN", "country_name": "India", "display": "🇮🇳 India", "detected_origin": "IN"}
+    elif re.search(r'\b(japan|jp)\b', raw_country.lower()) or raw_country == "JP":
+        return {"country_code": "JP", "country_name": "Japan", "display": "🇯🇵 Japan", "detected_origin": "JP"}
+    elif len(raw_country) == 2 and raw_country.isalpha():
+        c_name = COUNTRY_NAMES.get(raw_country, raw_country)
+        c_flag = COUNTRY_FLAGS.get(raw_country, raw_country)
+        return {"country_code": raw_country, "country_name": c_name, "display": f"{c_flag} ({c_name})", "detected_origin": raw_country}
+
+    # Address-wide check for United States
+    if re.search(r'\b(united states|usa)\b', addr_str.lower()):
+        return {"country_code": "US", "country_name": "United States", "display": "🇺🇸 United States", "detected_origin": "US Address"}
+
+    return {
+        "country_code": "Unknown",
+        "country_name": "Unknown",
+        "display": "Unknown",
+        "detected_origin": "Not Available"
+    }
+
 def extract_seller_id_from_url_or_tag(href_or_tag: Any) -> Optional[str]:
     """Extract Amazon merchant / seller ID token (e.g. A15HNQ673UZUPL) from href string or Tag."""
     if not href_or_tag:
@@ -172,43 +428,13 @@ def fetch_seller_information(marketplace: str = "amazon.com", seller_id: str = "
                     raw_addr = m_sec.group(2).strip()
                     address_lines = [l.strip() for l in raw_addr.split('\n') if l.strip() and len(l.strip()) < 80]
 
-        # Country extraction (almost always the last line in Amazon's address)
-        raw_country = address_lines[-1].strip().upper() if address_lines else "Unknown"
-        country_code = "Unknown"
+        full_text = soup.get_text(separator=' ', strip=True)
 
-        # Standardize country code
-        if raw_country in ["US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"]:
-            country_code = "US"
-        elif raw_country in ["CN", "CHINA", "PEOPLE'S REPUBLIC OF CHINA", "PRC"]:
-            country_code = "CN"
-        elif raw_country in ["HK", "HONG KONG"]:
-            country_code = "HK"
-        elif raw_country in ["GB", "UK", "UNITED KINGDOM", "GREAT BRITAIN"]:
-            country_code = "GB"
-        elif raw_country in ["DE", "GERMANY", "DEUTSCHLAND"]:
-            country_code = "DE"
-        elif raw_country in ["CA", "CANADA"]:
-            country_code = "CA"
-        elif raw_country in ["FR", "FRANCE"]:
-            country_code = "FR"
-        elif raw_country in ["IT", "ITALY", "ITALIA"]:
-            country_code = "IT"
-        elif raw_country in ["ES", "SPAIN", "ESPANA"]:
-            country_code = "ES"
-        elif raw_country in ["IN", "INDIA"]:
-            country_code = "IN"
-        elif raw_country in ["JP", "JAPAN"]:
-            country_code = "JP"
-        elif raw_country in ["AU", "AUSTRALIA"]:
-            country_code = "AU"
-        elif len(raw_country) == 2 and raw_country.isalpha():
-            country_code = raw_country
-        else:
-            country_code = raw_country if raw_country != "UNKNOWN" else "Unknown"
-
-        country_name = COUNTRY_NAMES.get(country_code, country_code)
-        display_flag = COUNTRY_FLAGS.get(country_code, country_code)
-        display_str = f"{display_flag} ({country_name})" if country_name != "Unknown" else "Unknown"
+        # Deep multi-layer country & Chinese origin detection
+        detected_info = detect_seller_country(business_name, address_lines, full_text=full_text)
+        country_code = detected_info["country_code"]
+        country_name = detected_info["country_name"]
+        display_str = detected_info["display"]
 
         result = {
             "seller_id": seller_id,
