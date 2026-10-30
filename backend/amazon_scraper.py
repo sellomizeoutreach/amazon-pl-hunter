@@ -416,6 +416,9 @@ class AmazonExtractor:
             "seller_country": seller_info.get("seller_country", "Unknown"),
             "seller_country_name": seller_info.get("seller_country_name", "Unknown"),
             "seller_country_display": seller_info.get("seller_country_display", "Unknown"),
+            "seller_phone": seller_info.get("seller_phone", "Not Found"),
+            "seller_email": seller_info.get("seller_email", "Not Found"),
+            "seller_bio": seller_info.get("seller_bio", ""),
             "all_sellers": all_sellers,
             "has_brand_store": has_brand_store,
             "has_aplus": has_aplus,
@@ -622,6 +625,15 @@ class AmazonExtractor:
                         decision_maker = find_decision_maker(brand_name)
                         brand_contacts = find_brand_website_and_contacts(brand_name)
 
+                        # Merge contacts: prioritize website email/phone if found, fallback to Amazon seller profile email/phone
+                        seller_em = details.get("seller_email", "Not Found")
+                        seller_ph = details.get("seller_phone", "Not Found")
+                        web_em = brand_contacts.get("email", "Not Found")
+                        web_ph = brand_contacts.get("phone", "Not Found")
+
+                        final_email = web_em if web_em != "Not Found" else seller_em
+                        final_phone = web_ph if web_ph != "Not Found" else seller_ph
+
                         record = {
                             "asin": prod["asin"],
                             "brand_name": brand_name,
@@ -631,13 +643,18 @@ class AmazonExtractor:
                             "seller_business_name": details.get("seller_business_name", "Not Available"),
                             "seller_address": details.get("seller_address", "Not Available"),
                             "seller_id": details.get("seller_id", ""),
+                            "seller_email": seller_em,
+                            "seller_phone": seller_ph,
+                            "seller_bio": details.get("seller_bio", ""),
                             "reviews": prod_reviews,
                             "catalog_max_reviews": catalog_max_rev,
                             "catalog_products_count": catalog_count,
                             "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
                             "website": brand_contacts.get("website", "Not Found"),
-                            "email": brand_contacts.get("email", "Not Found"),
-                            "phone": brand_contacts.get("phone", "Not Found"),
+                            "email": final_email,
+                            "phone": final_phone,
+                            "website_email": web_em,
+                            "website_phone": web_ph,
                             "founder_name": decision_maker.get("founder_name", "Not Found"),
                             "linkedin_url": decision_maker.get("linkedin_url", "Not Found"),
                             "decision_maker_role": decision_maker.get("role_title", ""),

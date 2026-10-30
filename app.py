@@ -70,6 +70,22 @@ except Exception:
 
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
+try:
+    from backend.auto_mailer import get_email_config, send_leads_email
+except Exception:
+    def get_email_config():
+        return {}
+    def send_leads_email(*args, **kwargs):
+        return False, "Auto mailer module not loaded"
+
+def save_email_config(cfg: dict):
+    config_path = os.path.join(ROOT_DIR, "email_config.json")
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print(f"Error saving config: {e}")
+
 REGION_OPTIONS = {
     "🌍 All Regions / Countries": "ALL",
     "🇺🇸 United States (US Only)": "US",
@@ -387,6 +403,23 @@ with st.sidebar:
             st.info("Temporary memory buffers cleared.")
 
         st.caption(f"Storage: **{len(load_saved_history())}** sessions saved")
+
+    with st.expander("📧 Automated Email Delivery Settings", expanded=False):
+        st.markdown("**Send leads straight to your inbox:**")
+        cfg = get_email_config()
+        cfg_sender = st.text_input("Sender Gmail:", value=cfg.get("sender_email", ""), placeholder="yourname@gmail.com", key="cfg_sender_input")
+        cfg_pwd = st.text_input("Google App Password (16-char):", value=cfg.get("sender_password", ""), type="password", help="Generate at myaccount.google.com/apppasswords", key="cfg_pwd_input")
+        cfg_receiver = st.text_input("Receiver Email:", value=cfg.get("receiver_email", ""), placeholder="leads@yourcompany.com", key="cfg_receiver_input")
+        if st.button("💾 Save Email Settings", use_container_width=True, key="btn_save_email_cfg"):
+            save_email_config({
+                "smtp_host": "smtp.gmail.com",
+                "smtp_port": 465,
+                "use_ssl": True,
+                "sender_email": cfg_sender.strip(),
+                "sender_password": cfg_pwd.strip(),
+                "receiver_email": cfg_receiver.strip()
+            })
+            st.success("✅ Email settings saved to local config!")
 
 
 # ==========================================
@@ -869,7 +902,7 @@ if st.session_state.active_results:
     csv_data = export_to_csv_bytes(records_to_export)
     excel_data = export_to_excel_bytes(records_to_export)
 
-    exp_col1, exp_col2, exp_info = st.columns([1.2, 1.2, 3])
+    exp_col1, exp_col2, exp_col3, exp_info = st.columns([1.2, 1.2, 1.2, 2.4])
     with exp_col1:
         st.download_button(
             label=f"📄 Download CSV ({len(df_filtered)})",
@@ -886,6 +919,13 @@ if st.session_state.active_results:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+    with exp_col3:
+        if st.button(f"📧 Email Leads ({len(df_filtered)})", use_container_width=True):
+            ok, msg = send_leads_email(records_to_export)
+            if ok:
+                st.success(f"✅ {msg}")
+            else:
+                st.error(f"❌ {msg}")
     with exp_info:
         st.caption(f"Showing **{len(df_filtered)}** of **{total_brands}** total extracted brands. Export contains currently filtered rows.")
 
@@ -894,11 +934,14 @@ if st.session_state.active_results:
         "brand_name",
         "matched_seller",
         "seller_country",
-        "seller_business_name",
-        "reviews",
-        "website",
+        "seller_phone",
+        "seller_email",
         "email",
         "phone",
+        "website",
+        "all_products_under_100",
+        "reviews",
+        "seller_business_name",
         "founder_name",
         "linkedin_url",
         "seller_address",

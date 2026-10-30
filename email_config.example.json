@@ -1,0 +1,8 @@
+{
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 465,
+  "use_ssl": true,
+  "sender_email": "your_email@gmail.com",
+  "sender_password": "your_16_char_google_app_password",
+  "receiver_email": "your_destination_email@gmail.com"
+}

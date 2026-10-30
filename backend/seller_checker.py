@@ -350,7 +350,10 @@ def fetch_seller_information(marketplace: str = "amazon.com", seller_id: str = "
             "seller_address": "Not Available",
             "seller_country": "Unknown",
             "seller_country_name": "Unknown",
-            "seller_country_display": "Unknown"
+            "seller_country_display": "Unknown",
+            "seller_phone": "Not Found",
+            "seller_email": "Not Found",
+            "seller_bio": ""
         }
 
     cache_key = f"{clean_marketplace}:{seller_id}"
@@ -387,7 +390,10 @@ def fetch_seller_information(marketplace: str = "amazon.com", seller_id: str = "
                 "seller_address": "Not Available",
                 "seller_country": "Unknown",
                 "seller_country_name": "Unknown",
-                "seller_country_display": "Unknown"
+                "seller_country_display": "Unknown",
+                "seller_phone": "Not Found",
+                "seller_email": "Not Found",
+                "seller_bio": ""
             }
             SELLER_INFO_CACHE[cache_key] = res
             return res
@@ -436,13 +442,78 @@ def fetch_seller_information(marketplace: str = "amazon.com", seller_id: str = "
         country_name = detected_info["country_name"]
         display_str = detected_info["display"]
 
+        # 3. Extract Customer Service Phone & Email, and Seller Bio from Amazon Profile
+        seller_phone = ""
+        seller_email = ""
+        seller_bio = ""
+
+        # Check mailto: links
+        for mailto in soup.select('a[href^="mailto:"]'):
+            href = mailto.get('href', '')
+            em_match = re.search(r'mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', href, re.I)
+            if em_match:
+                cand = em_match.group(1).strip().lower()
+                if not any(ign in cand for ign in ['amazon.', 'sentry.io', 'example.com', 'marketplace.']):
+                    seller_email = cand
+                    break
+
+        # Check tel: links
+        for tel in soup.select('a[href^="tel:"]'):
+            href = tel.get('href', '')
+            ph_match = re.search(r'tel:([+0-9\s\-\(\)\.]{7,25})', href, re.I)
+            if ph_match:
+                seller_phone = ph_match.group(1).strip()
+                break
+
+        # Check structured rows for Phone & Email
+        for row in soup.find_all(class_='a-row'):
+            row_txt = row.get_text(separator=' ', strip=True)
+            row_lower = row_txt.lower()
+            if not seller_email and any(k in row_lower for k in ['email:', 'customer service email:', 'e-mail:']):
+                em_m = re.search(r'(?:email|e-mail):\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', row_txt, re.I)
+                if em_m:
+                    cand = em_m.group(1).strip().lower()
+                    if not any(ign in cand for ign in ['amazon.', 'example.com', 'sentry.io']):
+                        seller_email = cand
+
+            if not seller_phone and any(k in row_lower for k in ['phone:', 'customer service phone:', 'telephone:', 'tel:']):
+                ph_m = re.search(r'(?:phone|telephone|tel):\s*([+0-9\s\-\(\)\.]{7,25})', row_txt, re.I)
+                if ph_m:
+                    seller_phone = ph_m.group(1).strip()
+
+        # Check Seller Bio / About Seller description
+        bio_nodes = soup.select('#seller-info-feedback-summary, #seller-about, .about-seller, #page-section-detail-seller-info, .seller-profile-about, #seller-profile-container')
+        for node in bio_nodes:
+            b_txt = node.get_text(separator=' ', strip=True)
+            if b_txt and len(b_txt) > 20:
+                seller_bio = b_txt[:350].strip()
+                break
+
+        # Fallback regex for email across full profile text if still missing
+        if not seller_email:
+            em_candidates = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', full_text)
+            for cand in em_candidates:
+                cand_l = cand.lower()
+                if not any(ign in cand_l for ign in ['amazon.', 'sentry.io', 'w3.org', 'schema.org', 'cloudflare', 'example.com']):
+                    seller_email = cand_l
+                    break
+
+        # Fallback regex for phone across full profile text if still missing
+        if not seller_phone:
+            ph_explicit = re.search(r'(?:phone|tel|telephone|call|customer service)[:\s]+([+0-9\s\-\(\)\.]{9,22})', full_text, re.I)
+            if ph_explicit:
+                seller_phone = ph_explicit.group(1).strip()
+
         result = {
             "seller_id": seller_id,
             "seller_business_name": business_name or "Not Available",
             "seller_address": ", ".join(address_lines) if address_lines else "Not Available",
             "seller_country": country_code,
             "seller_country_name": country_name,
-            "seller_country_display": display_str
+            "seller_country_display": display_str,
+            "seller_phone": seller_phone or "Not Found",
+            "seller_email": seller_email or "Not Found",
+            "seller_bio": seller_bio or ""
         }
 
         SELLER_INFO_CACHE[cache_key] = result
@@ -455,7 +526,10 @@ def fetch_seller_information(marketplace: str = "amazon.com", seller_id: str = "
             "seller_address": "Not Available",
             "seller_country": "Unknown",
             "seller_country_name": "Unknown",
-            "seller_country_display": "Unknown"
+            "seller_country_display": "Unknown",
+            "seller_phone": "Not Found",
+            "seller_email": "Not Found",
+            "seller_bio": ""
         }
         SELLER_INFO_CACHE[cache_key] = fallback
         return fallback

@@ -14,3 +14,9 @@ exports/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Secrets & Local Data
+email_config.json
+.env
+data/
+
