@@ -16,6 +16,7 @@ from backend.pl_detector import evaluate_private_label, is_megabrand_or_corporat
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
 from backend.seller_checker import fetch_seller_information, extract_seller_id_from_url_or_tag, matches_region_filter, is_seller_allowed
+from backend.brand_health_auditor import audit_asin_health, classify_brand_persona, generate_growth_strategy_and_pitch
 
 DEFAULT_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
@@ -395,7 +396,7 @@ class AmazonExtractor:
             if m_offers:
                 total_offers = max(total_offers, int(m_offers.group(1)))
 
-        # Extract review count from product page
+        # Extract review count and listing health problems
         page_reviews = 0
         rev_el = soup.select_one('#acrCustomerReviewText, [data-hook="total-review-count"], #acrCustomerReviewLink')
         if rev_el:
@@ -406,6 +407,11 @@ class AmazonExtractor:
                     page_reviews = int(m_rev.group(1))
                 except Exception:
                     pass
+
+        # Comprehensive ASIN Health & Problem Audit
+        health = audit_asin_health(soup, asin)
+        if not page_reviews and health.get("reviews"):
+            page_reviews = health.get("reviews")
 
         return {
             "brand": brand.strip(),
@@ -424,6 +430,16 @@ class AmazonExtractor:
             "has_aplus": has_aplus,
             "total_offers": total_offers,
             "reviews": page_reviews,
+            "rating": health.get("rating", 0.0),
+            "date_first_available": health.get("date_first_available", "Not Listed"),
+            "age_months": health.get("age_months"),
+            "is_suppressed": health.get("is_suppressed", False),
+            "is_buybox_suppressed": health.get("is_buybox_suppressed", False),
+            "has_frequently_returned_badge": health.get("has_frequently_returned_badge", False),
+            "bsr": health.get("bsr", "Not Ranked"),
+            "health_issues": health.get("health_issues", []),
+            "has_video": health.get("has_video", False),
+            "bullet_count": health.get("bullet_count", 0),
             "page_fetched": True
         }
 
@@ -435,6 +451,9 @@ class AmazonExtractor:
         region_filter: Optional[str] = None,
         exclude_countries: Optional[Any] = None,
         check_all_brand_products_under_100: bool = True,
+        require_contactable: bool = False,
+        direct_contact_only: bool = False,
+        persona_filter: Optional[str] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         should_stop_check: Optional[Callable[[], bool]] = None
     ) -> List[Dict[str, Any]]:
@@ -621,22 +640,149 @@ class AmazonExtractor:
                                 "total_found": len(extracted_records)
                             })
 
-                        # Search decision maker and brand website contacts
+                        # Step 1: Search decision maker and brand website contacts
                         decision_maker = find_decision_maker(brand_name)
-                        brand_contacts = find_brand_website_and_contacts(brand_name)
+                        founder_name = decision_maker.get("founder_name", "Not Found")
+                        linkedin_url = decision_maker.get("linkedin_url", "Not Found")
+                        
+                        brand_contacts = find_brand_website_and_contacts(brand_name, founder_name=founder_name)
 
-                        # Merge contacts: prioritize website email/phone if found, fallback to Amazon seller profile email/phone
+                        # Step 2: Separate Customer Service vs Direct Personal Contacts
+                        personal_em = brand_contacts.get("personal_email", "Not Found")
+                        cs_em = brand_contacts.get("cs_email", "Not Found")
+                        web_ph = brand_contacts.get("phone", "Not Found")
                         seller_em = details.get("seller_email", "Not Found")
                         seller_ph = details.get("seller_phone", "Not Found")
-                        web_em = brand_contacts.get("email", "Not Found")
-                        web_ph = brand_contacts.get("phone", "Not Found")
 
-                        final_email = web_em if web_em != "Not Found" else seller_em
+                        if seller_em != "Not Found" and cs_em == "Not Found":
+                            cs_em = seller_em
+
+                        # Determine primary outreach email & type
+                        if personal_em != "Not Found":
+                            final_email = personal_em
+                            email_type = "Direct Personal"
+                        elif cs_em != "Not Found":
+                            final_email = cs_em
+                            email_type = "Customer Support"
+                        elif seller_em != "Not Found":
+                            final_email = seller_em
+                            email_type = "Customer Support"
+                        else:
+                            final_email = "Not Found"
+                            email_type = "None"
+
                         final_phone = web_ph if web_ph != "Not Found" else seller_ph
+
+                        # Step 3: Contact Quality Classification
+                        has_direct_lead = (personal_em != "Not Found") or (linkedin_url != "Not Found" and "linkedin.com/in/" in linkedin_url)
+                        has_any_contact = has_direct_lead or (final_email != "Not Found") or (final_phone != "Not Found")
+
+                        if has_direct_lead:
+                            contact_quality = "⭐ Direct Decision Maker"
+                        elif has_any_contact:
+                            contact_quality = "📧 General / Support Only"
+                        else:
+                            contact_quality = "❌ Uncontactable"
+
+                        # Step 4: Strict Contactability Gates
+                        if require_contactable and not has_any_contact:
+                            if progress_callback:
+                                progress_callback({
+                                    "status": "skipped_uncontactable",
+                                    "current_page": page,
+                                    "max_pages": max_pages,
+                                    "total_scanned": total_scanned_count,
+                                    "brand_name": brand_name,
+                                    "message": f"[Skipped] '{brand_name}' has zero reachable contacts (No Email, Phone, or LinkedIn).",
+                                    "total_found": len(extracted_records)
+                                })
+                            continue
+
+                        if direct_contact_only and not has_direct_lead:
+                            if progress_callback:
+                                progress_callback({
+                                    "status": "skipped_no_direct_contact",
+                                    "current_page": page,
+                                    "max_pages": max_pages,
+                                    "total_scanned": total_scanned_count,
+                                    "brand_name": brand_name,
+                                    "message": f"[Skipped] '{brand_name}' does not have direct personal/founder contacts.",
+                                    "total_found": len(extracted_records)
+                                })
+                            continue
+
+                        # Step 5: Classify Brand Persona & Stage
+                        health_issues = details.get("health_issues", [])
+                        persona_title, persona_badge = classify_brand_persona(
+                            age_months=details.get("age_months"),
+                            reviews=prod_reviews,
+                            catalog_health_issues=health_issues,
+                            has_aplus=details.get("has_aplus", False)
+                        )
+
+                        # Step 6: Persona Filter Check
+                        if persona_filter and persona_filter.upper() != "ALL":
+                            pf = persona_filter.upper()
+                            if pf in ["NEW_LAUNCH", "NEW"] and "New Launch" not in persona_badge:
+                                continue
+                            elif pf in ["STAGNANT_VETERAN", "VETERAN", "STAGNANT"] and "Stagnant Veteran" not in persona_badge:
+                                continue
+                            elif pf in ["DISTRESSED", "PROBLEMS"] and "Distressed" not in persona_badge:
+                                continue
+
+                        # Step 7: Build Growth Strategy & Tailored Outreach Pitch
+                        prod_rating = details.get("rating", 0.0)
+                        if not prod_rating and prod.get("rating"):
+                            try:
+                                prod_rating = float(re.search(r'([0-9\.]+)', str(prod.get("rating"))).group(1))
+                            except Exception:
+                                pass
+
+                        strategy = generate_growth_strategy_and_pitch(
+                            brand_name=brand_name,
+                            persona_badge=persona_badge,
+                            primary_asin=prod["asin"],
+                            reviews=prod_reviews,
+                            rating=prod_rating,
+                            age_months=details.get("age_months"),
+                            date_first_available=details.get("date_first_available", "Not Listed"),
+                            health_issues=health_issues,
+                            has_aplus=details.get("has_aplus", False),
+                            has_video=details.get("has_video", False),
+                            founder_name=founder_name
+                        )
 
                         record = {
                             "asin": prod["asin"],
                             "brand_name": brand_name,
+                            "brand_persona": persona_badge,
+                            "brand_persona_title": persona_title,
+                            "contact_quality": contact_quality,
+                            "email": final_email,
+                            "email_type": email_type,
+                            "personal_email": personal_em,
+                            "cs_email": cs_em,
+                            "phone": final_phone,
+                            "social_summary": brand_contacts.get("social_summary", "Not Found"),
+                            "website": brand_contacts.get("website", "Not Found"),
+                            "founder_name": founder_name,
+                            "linkedin_url": linkedin_url,
+                            "decision_maker_role": decision_maker.get("role_title", ""),
+                            "date_first_available": details.get("date_first_available", "Not Listed"),
+                            "brand_age_months": details.get("age_months") or "Unknown",
+                            "catalog_health_summary": "; ".join(health_issues) if health_issues else "Healthy / No Critical Listing Alerts",
+                            "is_suppressed": details.get("is_suppressed", False),
+                            "is_buybox_suppressed": details.get("is_buybox_suppressed", False),
+                            "has_frequently_returned_badge": details.get("has_frequently_returned_badge", False),
+                            "bsr": details.get("bsr", "Not Ranked"),
+                            "growth_pitch_hook": strategy.get("pitch_hook", ""),
+                            "growth_strategy_achievable": strategy.get("achievable_milestones", ""),
+                            "growth_strategy_current": strategy.get("current_stats", ""),
+                            "reviews": prod_reviews,
+                            "rating": prod_rating if prod_rating > 0 else prod.get("rating", ""),
+                            "catalog_max_reviews": catalog_max_rev,
+                            "catalog_products_count": catalog_count,
+                            "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
                             "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
                             "seller_country": details.get("seller_country", "Unknown"),
                             "seller_country_display": details.get("seller_country_display", "Unknown"),
@@ -646,25 +792,12 @@ class AmazonExtractor:
                             "seller_email": seller_em,
                             "seller_phone": seller_ph,
                             "seller_bio": details.get("seller_bio", ""),
-                            "reviews": prod_reviews,
-                            "catalog_max_reviews": catalog_max_rev,
-                            "catalog_products_count": catalog_count,
-                            "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
-                            "website": brand_contacts.get("website", "Not Found"),
-                            "email": final_email,
-                            "phone": final_phone,
-                            "website_email": web_em,
-                            "website_phone": web_ph,
-                            "founder_name": decision_maker.get("founder_name", "Not Found"),
-                            "linkedin_url": decision_maker.get("linkedin_url", "Not Found"),
-                            "decision_maker_role": decision_maker.get("role_title", ""),
                             "pl_confidence": pl_eval.get("confidence", "High"),
                             "seller_match_type": pl_eval.get("seller_match_type", ""),
                             "buybox_seller": details.get("buybox_seller", "None"),
                             "all_sellers_found": ", ".join(details.get("all_sellers", [])) or details.get("buybox_seller", ""),
                             "product_title": prod.get("title", ""),
                             "price": prod.get("price", ""),
-                            "rating": prod.get("rating", ""),
                             "product_url": prod.get("product_url", f"{self.base_url}/dp/{prod['asin']}"),
                             "page": page
                         }

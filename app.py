@@ -95,6 +95,13 @@ REGION_OPTIONS = {
     "🇨🇦 Canada (CA Only)": "CA"
 }
 
+PERSONA_OPTIONS = {
+    "🌟 All Brand Personas": "ALL",
+    "🚀 New Launch Brands (<12m active, launch phase)": "NEW_LAUNCH",
+    "📉 Stagnant Veteran Brands (2+ yrs active, growth lag)": "STAGNANT_VETERAN",
+    "⚠️ Distressed Catalog (Return Badges / Suppression)": "DISTRESSED"
+}
+
 # ==========================================
 # PERSISTENT HISTORY STORAGE (File-backed)
 # ==========================================
@@ -482,6 +489,33 @@ with tab_single:
     )
     single_exclude_codes = [EXCLUDE_COUNTRY_CHOICES[k] for k in single_exclude_sel]
 
+    col_pers, col_gate = st.columns([1.5, 2.5])
+    with col_pers:
+        single_persona_lbl = st.selectbox(
+            "Brand Stage / Persona:",
+            options=list(PERSONA_OPTIONS.keys()),
+            index=0,
+            help="Filter for launch-stage brands, stagnant veterans needing turnaround, or distressed listings.",
+            key="select_single_persona"
+        )
+        single_persona_code = PERSONA_OPTIONS[single_persona_lbl]
+    with col_gate:
+        c_g1, c_g2 = st.columns(2)
+        with c_g1:
+            single_require_contactable = st.checkbox(
+                "🎯 Skip Uncontactable Leads",
+                value=True,
+                help="Only keeps leads that have reachable contact info (Email, Phone, or LinkedIn).",
+                key="chk_single_req_contact"
+            )
+        with c_g2:
+            single_direct_only = st.checkbox(
+                "⭐ Direct Founder / Decision Maker Only",
+                value=False,
+                help="Only keep leads with personal founder email or direct LinkedIn profile.",
+                key="chk_single_direct_only"
+            )
+
     btn_c1, btn_c2, _ = st.columns([1.2, 1, 4])
     with btn_c1:
         btn_start_single = st.button("🚀 Start Search", type="primary", use_container_width=True, disabled=st.session_state.is_running)
@@ -512,7 +546,7 @@ with tab_single:
                 if "record" in update:
                     st.session_state.active_results.append(update["record"])
                     df_live = pd.DataFrame(st.session_state.active_results)
-                    cols = ["asin", "brand_name", "matched_seller", "seller_country", "seller_business_name", "reviews", "founder_name", "linkedin_url", "pl_confidence"]
+                    cols = ["brand_persona", "contact_quality", "brand_name", "asin", "reviews", "email", "phone", "founder_name", "linkedin_url", "seller_country_display"]
                     live_table.dataframe(df_live[[c for c in cols if c in df_live.columns]], use_container_width=True)
 
             try:
@@ -525,6 +559,9 @@ with tab_single:
                     region_filter=single_region,
                     exclude_countries=single_exclude_codes,
                     check_all_brand_products_under_100=single_check_all_under_100,
+                    require_contactable=single_require_contactable,
+                    direct_contact_only=single_direct_only,
+                    persona_filter=single_persona_code,
                     progress_callback=single_progress,
                     should_stop_check=lambda: st.session_state.should_stop
                 )
@@ -579,8 +616,12 @@ with tab_bulk:
             bulk_kw_region = REGION_OPTIONS[bulk_kw_region_lbl]
             bulk_kw_exclude = st.multiselect("🚫 Exclude Sellers From:", options=list(EXCLUDE_COUNTRY_CHOICES.keys()), default=[], key="multisel_bulk_kw_exclude")
             bulk_kw_exclude_codes = [EXCLUDE_COUNTRY_CHOICES[k] for k in bulk_kw_exclude]
+            bulk_kw_persona_lbl = st.selectbox("Brand Persona:", options=list(PERSONA_OPTIONS.keys()), index=0, key="select_bulk_kw_persona")
+            bulk_kw_persona_code = PERSONA_OPTIONS[bulk_kw_persona_lbl]
             bulk_kw_filter_100 = st.checkbox("🔥 Only Extract < 100 Review Brands", value=False)
             bulk_kw_check_all_under_100 = st.checkbox("🛡️ Audit Brand: All Products < 100 Revs", value=True, key="chk_bulk_kw_all_under_100")
+            bulk_kw_require_contact = st.checkbox("🎯 Skip Uncontactable Leads", value=True, key="chk_bulk_kw_req_contact")
+            bulk_kw_direct_only = st.checkbox("⭐ Direct Founder / Decision Maker Only", value=False, key="chk_bulk_kw_direct_only")
             btn_start_bulk_kw = st.button("🚀 Start Bulk Keyword Hunt", type="primary", use_container_width=True, disabled=st.session_state.is_running)
 
         if btn_start_bulk_kw:
@@ -617,6 +658,9 @@ with tab_bulk:
                                 region_filter=bulk_kw_region,
                                 exclude_countries=bulk_kw_exclude_codes,
                                 check_all_brand_products_under_100=bulk_kw_check_all_under_100,
+                                require_contactable=bulk_kw_require_contact,
+                                direct_contact_only=bulk_kw_direct_only,
+                                persona_filter=bulk_kw_persona_code,
                                 should_stop_check=lambda: st.session_state.should_stop
                             )
                         except Exception as kw_err:
@@ -788,41 +832,47 @@ if st.session_state.active_results:
     phones_total = len(df_raw[df_raw["phone"].str.lower() != "not found"]) if "phone" in df_raw else 0
     verified_all_under_100_total = len(df_raw[df_raw["all_products_under_100"].astype(str).str.contains("Verified", case=False, na=False)]) if "all_products_under_100" in df_raw else 0
     founders_total = len(df_raw[df_raw["founder_name"].str.lower() != "not found"]) if "founder_name" in df_raw else 0
+    new_launch_total = len(df_raw[df_raw["brand_persona"].astype(str).str.contains("New Launch", case=False, na=False)]) if "brand_persona" in df_raw else 0
+    stagnant_veteran_total = len(df_raw[df_raw["brand_persona"].astype(str).str.contains("Stagnant Veteran", case=False, na=False)]) if "brand_persona" in df_raw else 0
+    distressed_total = len(df_raw[df_raw["brand_persona"].astype(str).str.contains("Distressed", case=False, na=False) | df_raw["has_frequently_returned_badge"].fillna(False)]) if "brand_persona" in df_raw else 0
+    direct_contacts_total = len(df_raw[df_raw["contact_quality"].astype(str).str.contains("Direct Decision Maker", case=False, na=False)]) if "contact_quality" in df_raw else 0
 
     m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     with m1:
         st.markdown(f'<div class="metric-card"><div class="metric-val">{total_brands}</div><div class="metric-lbl">Total PL Brands</div></div>', unsafe_allow_html=True)
     with m2:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🔥 {under_100_total}</div><div class="metric-lbl">&lt; 100 Reviews</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#10b981">🚀 {new_launch_total}</div><div class="metric-lbl">New Launches</div></div>', unsafe_allow_html=True)
     with m3:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#60a5fa">🇺🇸 {us_total}</div><div class="metric-lbl">US Sellers</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#f59e0b">📉 {stagnant_veteran_total}</div><div class="metric-lbl">Stagnant Veterans</div></div>', unsafe_allow_html=True)
     with m4:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#10b981">🛡️ {non_cn_total}</div><div class="metric-lbl">Non-China</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#ef4444">⚠️ {distressed_total}</div><div class="metric-lbl">Distressed</div></div>', unsafe_allow_html=True)
     with m5:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#38bdf8">🌐 {websites_total}</div><div class="metric-lbl">Websites</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#a855f7">⭐ {direct_contacts_total}</div><div class="metric-lbl">Direct Founders</div></div>', unsafe_allow_html=True)
     with m6:
-        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#fbbf24">✉️ {emails_total}</div><div class="metric-lbl">Emails</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#0ea5e9">✉️ {emails_total}</div><div class="metric-lbl">Reachable Emails</div></div>', unsafe_allow_html=True)
     with m7:
-        st.markdown(f'<div class="metric-card"><div class="metric-val">{founders_total}</div><div class="metric-lbl">Founders</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-val" style="color:#34d399">🛡️ {verified_all_under_100_total}</div><div class="metric-lbl">All SKUs &lt;100</div></div>', unsafe_allow_html=True)
 
     st.write("")
     
     st.subheader("🎛️ Results Filter & Search")
-    f_c1, f_c2, f_c3 = st.columns([3, 1.2, 2.3])
+    f_c1, f_c2, f_c3 = st.columns([3.2, 1.1, 2.2])
     with f_c1:
         filter_mode = st.radio(
             "Quick Filter:",
             options=[
                 "All Brands",
+                f"🚀 New Launches Only ({new_launch_total})",
+                f"📉 Stagnant Veterans Only ({stagnant_veteran_total})",
+                f"⚠️ Distressed Catalog ({distressed_total})",
+                f"⭐ Direct Decision Makers Only ({direct_contacts_total})",
                 f"🛡️ All Brand SKUs < 100 Revs ({verified_all_under_100_total})",
                 f"🔥 Less than 100 Reviews ({under_100_total})",
                 f"🛡️ Exclude China / HK ({non_cn_total})",
                 f"🇺🇸 US Registered Sellers ({us_total})",
-                f"🇨🇳 China / HK Sellers ({cn_total})",
                 f"🌐 Website Found ({websites_total})",
                 f"✉️ Email Found ({emails_total})",
-                f"📞 Phone Found ({phones_total})",
-                f"👤 Founder Found Only ({founders_total})"
+                f"📞 Phone Found ({phones_total})"
             ],
             horizontal=True
         )
@@ -852,7 +902,15 @@ if st.session_state.active_results:
         )
 
     df_filtered = df_raw.copy()
-    if "All Brand SKUs < 100 Revs" in filter_mode:
+    if "New Launches Only" in filter_mode:
+        df_filtered = df_filtered[df_filtered["brand_persona"].astype(str).str.contains("New Launch", case=False, na=False)]
+    elif "Stagnant Veterans Only" in filter_mode:
+        df_filtered = df_filtered[df_filtered["brand_persona"].astype(str).str.contains("Stagnant Veteran", case=False, na=False)]
+    elif "Distressed Catalog" in filter_mode:
+        df_filtered = df_filtered[df_filtered["brand_persona"].astype(str).str.contains("Distressed", case=False, na=False) | df_filtered["has_frequently_returned_badge"].fillna(False)]
+    elif "Direct Decision Makers Only" in filter_mode:
+        df_filtered = df_filtered[df_filtered["contact_quality"].astype(str).str.contains("Direct Decision Maker", case=False, na=False)]
+    elif "All Brand SKUs < 100 Revs" in filter_mode:
         if "all_products_under_100" in df_filtered.columns:
             df_filtered = df_filtered[df_filtered["all_products_under_100"].astype(str).str.contains("Verified", case=False, na=False)]
         else:
@@ -863,16 +921,12 @@ if st.session_state.active_results:
         df_filtered = df_filtered[~df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK"])]
     elif "US Registered Sellers" in filter_mode:
         df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper() == "US"]
-    elif "China / HK Sellers" in filter_mode:
-        df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper().isin(["CN", "HK"])]
     elif "Website Found" in filter_mode:
         df_filtered = df_filtered[df_filtered["website"].str.lower() != "not found"]
     elif "Email Found" in filter_mode:
         df_filtered = df_filtered[df_filtered["email"].str.lower() != "not found"]
     elif "Phone Found" in filter_mode:
         df_filtered = df_filtered[df_filtered["phone"].str.lower() != "not found"]
-    elif "Founder Found Only" in filter_mode:
-        df_filtered = df_filtered[df_filtered["founder_name"].str.lower() != "not found"]
 
     if unselected_countries is not None:
         df_filtered = df_filtered[df_filtered["seller_country"].astype(str).str.upper().isin(unselected_countries)]
@@ -930,21 +984,27 @@ if st.session_state.active_results:
         st.caption(f"Showing **{len(df_filtered)}** of **{total_brands}** total extracted brands. Export contains currently filtered rows.")
 
     cols_order = [
-        "asin",
+        "brand_persona",
+        "contact_quality",
         "brand_name",
-        "matched_seller",
-        "seller_country",
-        "seller_phone",
-        "seller_email",
+        "asin",
+        "reviews",
+        "rating",
+        "catalog_health_summary",
         "email",
+        "email_type",
         "phone",
         "website",
-        "all_products_under_100",
-        "reviews",
-        "seller_business_name",
         "founder_name",
         "linkedin_url",
+        "date_first_available",
+        "brand_age_months",
+        "all_products_under_100",
+        "matched_seller",
+        "seller_country_display",
+        "seller_business_name",
         "seller_address",
+        "growth_pitch_hook",
         "pl_confidence",
         "price",
         "product_title",
@@ -955,26 +1015,53 @@ if st.session_state.active_results:
     st.dataframe(
         df_filtered[display_cols],
         column_config={
-            "asin": st.column_config.TextColumn("ASIN"),
+            "brand_persona": st.column_config.TextColumn("Persona"),
+            "contact_quality": st.column_config.TextColumn("Contact Quality"),
             "brand_name": st.column_config.TextColumn("Brand Name"),
-            "matched_seller": st.column_config.TextColumn("PL Seller"),
-            "seller_country": st.column_config.TextColumn("Seller Region / Country"),
-            "seller_business_name": st.column_config.TextColumn("Seller Legal Name"),
+            "asin": st.column_config.TextColumn("ASIN"),
             "reviews": st.column_config.NumberColumn("Reviews", format="%d ⭐"),
-            "website": st.column_config.LinkColumn("Brand Website"),
-            "email": st.column_config.TextColumn("Public Email"),
+            "rating": st.column_config.TextColumn("Rating"),
+            "catalog_health_summary": st.column_config.TextColumn("Listing Alerts"),
+            "email": st.column_config.TextColumn("Outreach Email"),
+            "email_type": st.column_config.TextColumn("Email Type"),
             "phone": st.column_config.TextColumn("Phone Number"),
-            "founder_name": st.column_config.TextColumn("Founder / Decision Maker"),
-            "linkedin_url": st.column_config.LinkColumn("LinkedIn Profile"),
-            "seller_address": st.column_config.TextColumn("Registered Address"),
-            "pl_confidence": st.column_config.TextColumn("PL Status"),
-            "price": st.column_config.TextColumn("Price"),
-            "product_title": st.column_config.TextColumn("Product Title"),
+            "website": st.column_config.LinkColumn("Brand Website"),
+            "founder_name": st.column_config.TextColumn("Founder / Executive"),
+            "linkedin_url": st.column_config.LinkColumn("LinkedIn"),
+            "date_first_available": st.column_config.TextColumn("Launch Date"),
+            "growth_pitch_hook": st.column_config.TextColumn("Pitch Hook"),
+            "seller_country_display": st.column_config.TextColumn("Seller Region"),
+            "seller_business_name": st.column_config.TextColumn("Legal Name"),
+            "matched_seller": st.column_config.TextColumn("PL Seller"),
             "product_url": st.column_config.LinkColumn("Amazon Listing")
         },
         use_container_width=True,
         hide_index=True
     )
+
+    # Growth Strategy & Turnaround Pitch Cards
+    if len(df_filtered) > 0 and "growth_pitch_hook" in df_filtered.columns:
+        with st.expander("💡 View Tailored Growth Pitches & Problem Audits for Discovered Brands", expanded=False):
+            for _, row in df_filtered.head(25).iterrows():
+                b_name = row.get("brand_name", "")
+                persona = row.get("brand_persona", "PL Brand")
+                asin = row.get("asin", "")
+                launch = row.get("date_first_available", "Not Listed")
+                alerts = row.get("catalog_health_summary", "Healthy")
+                baseline = row.get("growth_strategy_current", "")
+                achieve = row.get("growth_strategy_achievable", "")
+                hook = row.get("growth_pitch_hook", "")
+                qual = row.get("contact_quality", "")
+
+                st.markdown(f"#### {b_name} &bull; `{persona}` &bull; {qual}")
+                st.caption(f"ASIN: {asin} &bull; Launched: {launch} &bull; Alerts: {alerts}")
+                if baseline:
+                    st.markdown(f"**Baseline Audit:** `{baseline}`")
+                if achieve:
+                    st.markdown(f"**Achievable Milestones:**\n```\n{achieve}\n```")
+                if hook:
+                    st.info(f"🎯 **Cold Outreach Pitch Hook:**\n\n\"{hook}\"")
+                st.divider()
 
 # ----------------------------------------------------
 # TAB 3: SEARCH HISTORY (Persistent)

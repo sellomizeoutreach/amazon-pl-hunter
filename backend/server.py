@@ -10,12 +10,13 @@ from backend.pl_detector import evaluate_private_label
 from backend.linkedin_finder import find_decision_maker
 from backend.brand_finder import find_brand_website_and_contacts
 from backend.seller_checker import matches_region_filter, is_seller_allowed
+from backend.brand_health_auditor import classify_brand_persona, generate_growth_strategy_and_pitch
 from backend.exporter import export_to_csv_bytes, export_to_excel_bytes
 
 app = FastAPI(
     title="Amazon Private Label & LinkedIn Extractor API",
     description="Extracts Private Label brands, evaluates buy box and multi-seller listings, and discovers founders on LinkedIn.",
-    version="1.1.0"
+    version="1.2.0"
 )
 
 # Enable CORS for browser extensions and local dashboards
@@ -37,6 +38,9 @@ class ExtractRequest(BaseModel):
     region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
     exclude_countries: Optional[Any] = Field(default=None, description="Optional list or comma-separated string of countries to exclude, e.g. ['CN', 'HK']")
     check_all_brand_products_under_100: bool = Field(default=True, description="Verify that ALL products from the brand have < max_reviews")
+    require_contactable: bool = Field(default=False, description="Filter out brands with zero contact channels")
+    direct_contact_only: bool = Field(default=False, description="Filter for direct founder/decision-maker contacts only")
+    persona_filter: Optional[str] = Field(default=None, description="Filter by brand persona: NEW_LAUNCH, STAGNANT_VETERAN, DISTRESSED")
 
 class DirectProductScanItem(BaseModel):
     asin: str
@@ -53,8 +57,23 @@ class ActiveTabScanRequest(BaseModel):
     region_filter: Optional[str] = Field(default=None, description="Optional seller region filter, e.g. US, NON_CN, CN, UK_EU")
     exclude_countries: Optional[Any] = Field(default=None, description="Optional countries to exclude, e.g. ['CN', 'HK']")
     check_all_brand_products_under_100: bool = Field(default=True, description="Verify that ALL products from the brand have < max_reviews")
+    require_contactable: bool = Field(default=False, description="Filter out brands with zero contact channels")
+    direct_contact_only: bool = Field(default=False, description="Filter for direct founder/decision-maker contacts only")
+    persona_filter: Optional[str] = Field(default=None, description="Filter by brand persona: NEW_LAUNCH, STAGNANT_VETERAN, DISTRESSED")
 
-def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages: int, max_reviews: Optional[int] = None, region_filter: Optional[str] = None, exclude_countries: Optional[Any] = None, check_all_brand_products_under_100: bool = True):
+def background_crawl_worker(
+    job_id: str,
+    query: str,
+    marketplace: str,
+    max_pages: int,
+    max_reviews: Optional[int] = None,
+    region_filter: Optional[str] = None,
+    exclude_countries: Optional[Any] = None,
+    check_all_brand_products_under_100: bool = True,
+    require_contactable: bool = False,
+    direct_contact_only: bool = False,
+    persona_filter: Optional[str] = None
+):
     """Worker function that runs the extraction job in background."""
     job = JOBS.get(job_id)
     if not job:
@@ -94,6 +113,9 @@ def background_crawl_worker(job_id: str, query: str, marketplace: str, max_pages
             region_filter=region_filter,
             exclude_countries=exclude_countries,
             check_all_brand_products_under_100=check_all_brand_products_under_100,
+            require_contactable=require_contactable,
+            direct_contact_only=direct_contact_only,
+            persona_filter=persona_filter,
             progress_callback=progress_callback,
             should_stop_check=should_stop
         )
@@ -154,7 +176,10 @@ def start_extraction(req: ExtractRequest, background_tasks: BackgroundTasks):
         req.max_reviews,
         req.region_filter,
         req.exclude_countries,
-        req.check_all_brand_products_under_100
+        req.check_all_brand_products_under_100,
+        req.require_contactable,
+        req.direct_contact_only,
+        req.persona_filter
     )
 
     return {
@@ -245,27 +270,121 @@ def analyze_active_tab(req: ActiveTabScanRequest):
             seen_brands.add(norm_b)
             # Find decision maker and brand website contacts
             decision_maker = find_decision_maker(brand_name)
-            brand_contacts = find_brand_website_and_contacts(brand_name)
+            founder_name = decision_maker.get("founder_name", "Not Found")
+            linkedin_url = decision_maker.get("linkedin_url", "Not Found")
+            brand_contacts = find_brand_website_and_contacts(brand_name, founder_name=founder_name)
+
+            personal_em = brand_contacts.get("personal_email", "Not Found")
+            cs_em = brand_contacts.get("cs_email", "Not Found")
+            web_ph = brand_contacts.get("phone", "Not Found")
+            seller_em = details.get("seller_email", "Not Found")
+            seller_ph = details.get("seller_phone", "Not Found")
+
+            if seller_em != "Not Found" and cs_em == "Not Found":
+                cs_em = seller_em
+
+            if personal_em != "Not Found":
+                final_email = personal_em
+                email_type = "Direct Personal"
+            elif cs_em != "Not Found":
+                final_email = cs_em
+                email_type = "Customer Support"
+            elif seller_em != "Not Found":
+                final_email = seller_em
+                email_type = "Customer Support"
+            else:
+                final_email = "Not Found"
+                email_type = "None"
+
+            final_phone = web_ph if web_ph != "Not Found" else seller_ph
+
+            has_direct_lead = (personal_em != "Not Found") or (linkedin_url != "Not Found" and "linkedin.com/in/" in linkedin_url)
+            has_any_contact = has_direct_lead or (final_email != "Not Found") or (final_phone != "Not Found")
+
+            if has_direct_lead:
+                contact_quality = "⭐ Direct Decision Maker"
+            elif has_any_contact:
+                contact_quality = "📧 General / Support Only"
+            else:
+                contact_quality = "❌ Uncontactable"
+
+            if req.require_contactable and not has_any_contact:
+                continue
+            if req.direct_contact_only and not has_direct_lead:
+                continue
+
+            health_issues = details.get("health_issues", [])
+            persona_title, persona_badge = classify_brand_persona(
+                age_months=details.get("age_months"),
+                reviews=prod_reviews,
+                catalog_health_issues=health_issues,
+                has_aplus=details.get("has_aplus", False)
+            )
+
+            if req.persona_filter and req.persona_filter.upper() != "ALL":
+                pf = req.persona_filter.upper()
+                if pf in ["NEW_LAUNCH", "NEW"] and "New Launch" not in persona_badge:
+                    continue
+                elif pf in ["STAGNANT_VETERAN", "VETERAN", "STAGNANT"] and "Stagnant Veteran" not in persona_badge:
+                    continue
+                elif pf in ["DISTRESSED", "PROBLEMS"] and "Distressed" not in persona_badge:
+                    continue
+
+            prod_rating = details.get("rating", 0.0)
+            strategy = generate_growth_strategy_and_pitch(
+                brand_name=brand_name,
+                persona_badge=persona_badge,
+                primary_asin=asin,
+                reviews=prod_reviews,
+                rating=prod_rating,
+                age_months=details.get("age_months"),
+                date_first_available=details.get("date_first_available", "Not Listed"),
+                health_issues=health_issues,
+                has_aplus=details.get("has_aplus", False),
+                has_video=details.get("has_video", False),
+                founder_name=founder_name
+            )
 
             record = {
                 "asin": asin,
                 "brand_name": brand_name,
+                "brand_persona": persona_badge,
+                "brand_persona_title": persona_title,
+                "contact_quality": contact_quality,
+                "email": final_email,
+                "email_type": email_type,
+                "personal_email": personal_em,
+                "cs_email": cs_em,
+                "phone": final_phone,
+                "social_summary": brand_contacts.get("social_summary", "Not Found"),
+                "website": brand_contacts.get("website", "Not Found"),
+                "founder_name": founder_name,
+                "linkedin_url": linkedin_url,
+                "decision_maker_role": decision_maker.get("role_title", ""),
+                "date_first_available": details.get("date_first_available", "Not Listed"),
+                "brand_age_months": details.get("age_months") or "Unknown",
+                "catalog_health_summary": "; ".join(health_issues) if health_issues else "Healthy / No Critical Listing Alerts",
+                "is_suppressed": details.get("is_suppressed", False),
+                "is_buybox_suppressed": details.get("is_buybox_suppressed", False),
+                "has_frequently_returned_badge": details.get("has_frequently_returned_badge", False),
+                "bsr": details.get("bsr", "Not Ranked"),
+                "growth_pitch_hook": strategy.get("pitch_hook", ""),
+                "growth_strategy_achievable": strategy.get("achievable_milestones", ""),
+                "growth_strategy_current": strategy.get("current_stats", ""),
+                "reviews": prod_reviews,
+                "rating": prod_rating if prod_rating > 0 else "",
+                "catalog_max_reviews": catalog_max_rev,
+                "catalog_products_count": catalog_count,
+                "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
                 "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
                 "seller_country": details.get("seller_country", "Unknown"),
                 "seller_country_display": details.get("seller_country_display", "Unknown"),
                 "seller_business_name": details.get("seller_business_name", "Not Available"),
                 "seller_address": details.get("seller_address", "Not Available"),
                 "seller_id": details.get("seller_id", ""),
-                "reviews": prod_reviews,
-                "catalog_max_reviews": catalog_max_rev,
-                "catalog_products_count": catalog_count,
-                "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
-                "website": brand_contacts.get("website", "Not Found"),
-                "email": brand_contacts.get("email", "Not Found"),
-                "phone": brand_contacts.get("phone", "Not Found"),
-                "founder_name": decision_maker.get("founder_name", "Not Found"),
-                "linkedin_url": decision_maker.get("linkedin_url", "Not Found"),
-                "decision_maker_role": decision_maker.get("role_title", ""),
+                "seller_email": seller_em,
+                "seller_phone": seller_ph,
+                "seller_bio": details.get("seller_bio", ""),
                 "pl_confidence": pl_eval.get("confidence", "High"),
                 "seller_match_type": pl_eval.get("seller_match_type", ""),
                 "buybox_seller": details.get("buybox_seller", "None"),

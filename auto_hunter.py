@@ -6,9 +6,13 @@ Runs headless automated lead discovery across a keyword list:
 - Verifies Private Label ownership
 - Audits full brand catalog: only keeps brands where ALL products have < 100 reviews
 - Strict non-China origin filter (US/UK/EU/CA)
+- Listing health & problem detection (suppression, return badges, star rating)
+- Brand Persona segmentation (🚀 New Launch, 📉 Stagnant Veteran, ⚠️ Distressed)
+- Strict Contactability Gate: skips leads with no reachable contact channels
 - Extracts Amazon seller customer service phone & email
-- Enriches with brand website, website email & phone
+- Enriches with brand website, personal vs CS emails, and direct phone
 - Discovers LinkedIn founder / CEO
+- Tailors cold pitch outreach hooks and growth strategies
 - Deduplicates leads across historical runs
 - Dispatches formatted HTML summary email with CSV/Excel attachments
 """
@@ -91,6 +95,9 @@ def run_auto_hunt(
     marketplace: str = "amazon.com",
     region_filter: str = "NON_CN",
     exclude_countries: List[str] = None,
+    require_contactable: bool = True,
+    direct_contact_only: bool = False,
+    persona_filter: str = None,
     send_email: bool = True,
     delay: float = 0.5
 ):
@@ -99,6 +106,11 @@ def run_auto_hunt(
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Marketplace: {marketplace} | Max Pages/Keyword: {max_pages_per_kw}")
     print(f"Region: {region_filter} (Non-China) | Strict Catalog Audit: All SKUs < 100 Revs")
+    print(f"Contact Gate: {'Require Contactable (Skip No-Contact Leads)' if require_contactable else 'Include All'}")
+    if direct_contact_only:
+        print("Contact Filter: ⭐ Direct Founder / Executive Contacts Only")
+    if persona_filter:
+        print(f"Persona Filter: {persona_filter}")
     print("=" * 70)
 
     if exclude_countries is None:
@@ -121,7 +133,10 @@ def run_auto_hunt(
                 region_filter=region_filter,
                 exclude_countries=exclude_countries,
                 check_all_brand_products_under_100=True,
-                progress_callback=lambda u: print(f"  -> {u.get('message', '')}") if "Verified PL" in u.get('message', '') or "Disqualified" in u.get('message', '') else None
+                require_contactable=require_contactable,
+                direct_contact_only=direct_contact_only,
+                persona_filter=persona_filter,
+                progress_callback=lambda u: print(f"  -> {u.get('message', '')}") if "Verified PL" in u.get('message', '') or "Disqualified" in u.get('message', '') or "Skipped" in u.get('message', '') else None
             )
 
             for r in results:
@@ -129,7 +144,9 @@ def run_auto_hunt(
                 if b_norm and b_norm not in seen_brands:
                     seen_brands.add(b_norm)
                     new_discovered_leads.append(r)
-                    print(f"  ⭐ NEW LEAD SECURED: '{r.get('brand_name')}' | Reviews: {r.get('reviews')} | Seller: {r.get('seller_country')} | Contact Email: {r.get('email')} | Phone: {r.get('phone')}")
+                    persona = r.get("brand_persona", "PL Brand")
+                    qual = r.get("contact_quality", "")
+                    print(f"  ⭐ NEW LEAD SECURED: [{persona}] '{r.get('brand_name')}' | {qual} | Reviews: {r.get('reviews')} | Seller: {r.get('seller_country_display')} | Email: {r.get('email')} | Phone: {r.get('phone')}")
 
         except Exception as e:
             print(f"  Notice processing '{kw}': {e}")
@@ -160,7 +177,7 @@ def run_auto_hunt(
             cfg = get_email_config()
             if cfg.get("sender_email") and cfg.get("sender_password") and cfg.get("receiver_email"):
                 print(f"📧 Dispatching automated report with attachments to {cfg.get('receiver_email')}...")
-                ok, msg = send_leads_email(new_discovered_leads, config=cfg)
+                ok, msg = send_leads_email(new_discovered_leads, custom_config=cfg)
                 if ok:
                     print(f"✅ {msg}")
                 else:
@@ -175,11 +192,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automated Amazon Private Label Hunter")
     parser.add_argument("--pages", type=int, default=2, help="Max search pages per keyword (default 2)")
     parser.add_argument("--marketplace", type=str, default="amazon.com", help="Amazon marketplace domain")
+    parser.add_argument("--allow-uncontactable", action="store_true", help="Include leads even if they have no reachable contact")
+    parser.add_argument("--direct-only", action="store_true", help="Only keep leads with direct founder/decision-maker contacts")
+    parser.add_argument("--persona", type=str, default=None, choices=["NEW_LAUNCH", "STAGNANT_VETERAN", "DISTRESSED"], help="Filter by specific brand persona")
     parser.add_argument("--no-email", action="store_true", help="Skip sending email report")
     args = parser.parse_args()
 
     run_auto_hunt(
         max_pages_per_kw=args.pages,
         marketplace=args.marketplace,
+        require_contactable=not args.allow_uncontactable,
+        direct_contact_only=args.direct_only,
+        persona_filter=args.persona,
         send_email=not args.no_email
     )
