@@ -11,11 +11,23 @@ on:
         description: 'Pages to crawl per keyword'
         required: false
         default: '2'
+      persona:
+        description: 'Filter by brand persona (leave blank for all): NEW_LAUNCH | STAGNANT_VETERAN | DISTRESSED'
+        required: false
+        default: ''
+      require_contactable:
+        description: 'Skip leads with zero contact info? (true/false)'
+        required: false
+        default: 'true'
+      direct_only:
+        description: 'Require a direct/personal founder contact (not CS email)? (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
   hunt-and-email:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Repository
@@ -32,6 +44,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Build CLI flags
+        id: flags
+        run: |
+          FLAGS="--pages ${{ github.event.inputs.pages || 2 }}"
+
+          # Contactability gate: default ON for automated runs (only skip if explicitly false)
+          REQUIRE_CONTACTABLE="${{ github.event.inputs.require_contactable || 'true' }}"
+          if [ "$REQUIRE_CONTACTABLE" = "false" ]; then
+            FLAGS="$FLAGS --allow-uncontactable"
+          fi
+
+          # Direct-contact-only gate: default OFF
+          DIRECT_ONLY="${{ github.event.inputs.direct_only || 'false' }}"
+          if [ "$DIRECT_ONLY" = "true" ]; then
+            FLAGS="$FLAGS --direct-only"
+          fi
+
+          # Persona filter: only add if provided
+          PERSONA="${{ github.event.inputs.persona || '' }}"
+          if [ -n "$PERSONA" ]; then
+            FLAGS="$FLAGS --persona $PERSONA"
+          fi
+
+          echo "flags=$FLAGS" >> $GITHUB_OUTPUT
+          echo "Resolved flags: $FLAGS"
+
       - name: Run Lead Discovery & Send Email
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
@@ -40,7 +78,7 @@ jobs:
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
         run: |
-          python auto_hunter.py --pages ${{ github.event.inputs.pages || 2 }}
+          python auto_hunter.py ${{ steps.flags.outputs.flags }}
 
       - name: Persist Historical Deduplication Database
         uses: actions/upload-artifact@v4
