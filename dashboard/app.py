@@ -102,6 +102,20 @@ PERSONA_OPTIONS = {
     "⚠️ Distressed Catalog (Return Badges / Suppression)": "DISTRESSED"
 }
 
+MARKETPLACE_OPTIONS = [
+    "amazon.com",
+    "amazon.co.uk",
+    "amazon.de",
+    "amazon.ca",
+    "amazon.fr",
+    "amazon.it",
+    "amazon.es",
+    "amazon.in",
+    "amazon.com.au",
+    "amazon.co.jp"
+]
+MARKETPLACES = {m: m for m in MARKETPLACE_OPTIONS}
+
 # ==========================================
 # PERSISTENT HISTORY STORAGE (File-backed)
 # ==========================================
@@ -376,7 +390,7 @@ with st.sidebar:
     st.header("⚙️ Global Settings")
     marketplace = st.selectbox(
         "Amazon Marketplace",
-        options=["amazon.com", "amazon.co.uk", "amazon.de", "amazon.ca", "amazon.fr", "amazon.it", "amazon.es"],
+        options=MARKETPLACE_OPTIONS,
         index=0
     )
     
@@ -458,7 +472,7 @@ with tab_brand_scan:
     with col_asin_mkt:
         direct_asin_mkt = st.selectbox(
             "Marketplace",
-            options=list(MARKETPLACES.keys()),
+            options=MARKETPLACE_OPTIONS,
             index=0,
             key="select_direct_asin_mkt"
         )
