@@ -169,8 +169,69 @@ def run_auto_hunt(
     else:
         print("No new leads discovered in this cycle (all matching brands were already in historical leads).")
 
+def run_single_asin_audit(
+    asin_or_url: str,
+    marketplace: str = "amazon.com",
+    check_all_brand_products_under_100: bool = True,
+    send_email: bool = False
+):
+    print("=" * 70)
+    print("🔍 RUNNING DIRECT ASIN / BRAND FULL AUDIT")
+    print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Target: {asin_or_url} | Marketplace: {marketplace}")
+    print("=" * 70)
+
+    extractor = AmazonExtractor(marketplace=marketplace)
+    res = extractor.audit_brand_by_asin(
+        asin_or_url=asin_or_url,
+        check_all_brand_products_under_100=check_all_brand_products_under_100,
+        progress_callback=lambda u: print(f"  -> {u.get('message', '')}")
+    )
+
+    if not res.get("success"):
+        print(f"\n❌ Audit failed: {res.get('error')}")
+        return
+
+    print("\n" + "=" * 70)
+    print(f"🎯 AUDIT COMPLETE FOR BRAND: '{res.get('brand_name')}' (ASIN: {res.get('asin')})")
+    print("=" * 70)
+    print(f"• Persona:         {res.get('brand_persona')} ({res.get('brand_persona_title')})")
+    print(f"• Contact Quality: {res.get('contact_quality')}")
+    print(f"• Founder / CEO:   {res.get('founder_name')} | LinkedIn: {res.get('linkedin_url')}")
+    print(f"• Primary Email:   {res.get('email')} ({res.get('email_type')})")
+    print(f"• Direct Phone:    {res.get('phone')}")
+    print(f"• Website:         {res.get('website')}")
+    print(f"• Social:          {res.get('social_summary')}")
+    print(f"• Seller Entity:   {res.get('seller_business_name')} ({res.get('seller_country_display')})")
+    print(f"• Catalog Check:   {res.get('all_products_under_100')} (Max reviews: {res.get('catalog_max_reviews')})")
+    print(f"• Listing Health:  {res.get('catalog_health_summary')}")
+    print(f"• Rating / BSR:    {res.get('rating')}★ | BSR: {res.get('bsr')}")
+    print(f"• Launch Date:     {res.get('date_first_available')} (Age: {res.get('brand_age_months')} mos)")
+    print(f"\n--- TAILORED OUTREACH PITCH HOOK ---\n{res.get('growth_pitch_hook')}\n")
+
+    # Save to data directory
+    out_csv = os.path.join(ROOT_DIR, "data", f"audit_{res.get('asin')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+    try:
+        from backend.exporter import records_to_dataframe
+        df = records_to_dataframe([res])
+        df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+        print(f"💾 Saved audit export: {out_csv}")
+    except Exception as e:
+        print(f"Notice saving CSV: {e}")
+
+    if send_email:
+        cfg = get_email_config()
+        if cfg.get("sender_email") and cfg.get("sender_password") and cfg.get("receiver_email"):
+            print(f"📧 Dispatching audit report to {cfg.get('receiver_email')}...")
+            ok, msg = send_leads_email([res], custom_config=cfg)
+            if ok:
+                print(f"✅ {msg}")
+            else:
+                print(f"❌ Email sending failed: {msg}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automated Amazon Private Label Hunter")
+    parser.add_argument("--asin", type=str, default=None, help="Directly audit a single ASIN or Amazon product URL with all brand SOPs")
     parser.add_argument("--pages", type=int, default=2, help="Max search pages per keyword (default 2)")
     parser.add_argument("--marketplace", type=str, default="amazon.com", help="Amazon marketplace domain")
     parser.add_argument("--allow-uncontactable", action="store_true", help="Include leads even if they have no reachable contact")
@@ -180,12 +241,19 @@ if __name__ == "__main__":
     parser.add_argument("--refresh-keywords", action="store_true", help="Force-regenerate the keyword list from Amazon BSR/Movers/DDGS, bypassing today's cache")
     args = parser.parse_args()
 
-    run_auto_hunt(
-        max_pages_per_kw=args.pages,
-        marketplace=args.marketplace,
-        require_contactable=not args.allow_uncontactable,
-        direct_contact_only=args.direct_only,
-        persona_filter=args.persona,
-        send_email=not args.no_email,
-        refresh_keywords=args.refresh_keywords,
-    )
+    if args.asin:
+        run_single_asin_audit(
+            asin_or_url=args.asin,
+            marketplace=args.marketplace,
+            send_email=not args.no_email
+        )
+    else:
+        run_auto_hunt(
+            max_pages_per_kw=args.pages,
+            marketplace=args.marketplace,
+            require_contactable=not args.allow_uncontactable,
+            direct_contact_only=args.direct_only,
+            persona_filter=args.persona,
+            send_email=not args.no_email,
+            refresh_keywords=args.refresh_keywords,
+        )

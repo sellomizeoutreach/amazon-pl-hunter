@@ -432,11 +432,216 @@ with st.sidebar:
 # ==========================================
 # NAVIGATION TABS
 # ==========================================
-tab_single, tab_bulk, tab_history = st.tabs([
+tab_brand_scan, tab_single, tab_bulk, tab_history = st.tabs([
+    "🎯 Direct Brand & ASIN Audit",
     "🌐 Single Search & Crawl",
     "⚡ Bulk Operations",
     "📜 Search History"
 ])
+
+# ----------------------------------------------------
+# TAB 0: DIRECT BRAND & ASIN AUDIT
+# ----------------------------------------------------
+with tab_brand_scan:
+    st.markdown("""
+    **Instant Deep Brand & ASIN Audit**  
+    Paste any Amazon product ASIN or product URL to execute a 360° audit: Private Label verification, seller registration entity & country, full brand catalog review velocity (<100 reviews), listing health problems (suppressed, return badges), founder discovery on LinkedIn, personal email vs customer service email, brand persona classification, and tailored cold outreach pitch hook.
+    """)
+
+    col_asin_in, col_asin_mkt, col_asin_chk = st.columns([3.2, 1.3, 1.8])
+    with col_asin_in:
+        direct_asin_input = st.text_input(
+            "Amazon ASIN or Product URL",
+            placeholder="e.g. B08N5WRWNW or https://www.amazon.com/dp/B08N5WRWNW",
+            key="input_direct_asin_audit"
+        )
+    with col_asin_mkt:
+        direct_asin_mkt = st.selectbox(
+            "Marketplace",
+            options=list(MARKETPLACES.keys()),
+            index=0,
+            key="select_direct_asin_mkt"
+        )
+    with col_asin_chk:
+        direct_check_catalog = st.checkbox(
+            "🛡️ Audit Full Brand Catalog",
+            value=True,
+            help="Audits other products from this brand on Amazon to verify that all SKUs have < 100 reviews.",
+            key="chk_direct_asin_catalog"
+        )
+
+    btn_run_direct_audit = st.button("🔍 Run Full Brand & ASIN Audit", type="primary", use_container_width=True, key="btn_run_direct_asin_audit")
+
+    if btn_run_direct_audit:
+        if not direct_asin_input.strip():
+            st.error("Please enter a valid Amazon ASIN or Product URL.")
+        else:
+            with st.spinner("Executing proprietary Brand & ASIN audit pipeline..."):
+                status_box = st.empty()
+                progress_bar = st.progress(10)
+
+                def audit_callback(update):
+                    msg = update.get("message", "")
+                    if msg:
+                        status_box.info(f"⏳ {msg}")
+                    st_val = update.get("status")
+                    if st_val == "inspecting_asin":
+                        progress_bar.progress(25)
+                    elif st_val == "auditing_catalog":
+                        progress_bar.progress(50)
+                    elif st_val == "discovering_contacts":
+                        progress_bar.progress(75)
+                    elif st_val == "generating_pitch":
+                        progress_bar.progress(90)
+                    elif st_val == "completed":
+                        progress_bar.progress(100)
+
+                extractor = AmazonExtractor(marketplace=direct_asin_mkt, delay_between_requests=0.2)
+                res = extractor.audit_brand_by_asin(
+                    asin_or_url=direct_asin_input.strip(),
+                    check_all_brand_products_under_100=direct_check_catalog,
+                    progress_callback=audit_callback
+                )
+
+                if not res.get("success"):
+                    status_box.empty()
+                    progress_bar.empty()
+                    st.error(f"❌ Audit Failed: {res.get('error', 'Unknown error')}")
+                else:
+                    status_box.success(f"✅ Deep Brand Audit completed for **{res.get('brand_name')}** (ASIN: {res.get('asin')})!")
+                    progress_bar.empty()
+                    
+                    # Store in active results so explorer and downloads work immediately
+                    st.session_state.active_results = [res]
+                    save_session_to_history({
+                        "type": "direct_asin_audit",
+                        "query": f"ASIN Audit: {res.get('asin')} ({res.get('brand_name')})",
+                        "marketplace": direct_asin_mkt,
+                        "region_filter": "ALL",
+                        "exclude_countries": [],
+                        "pages": 1,
+                        "records": [res]
+                    })
+
+                    # Render Direct Brand Audit Card
+                    st.markdown("---")
+                    
+                    # Top Brand Header Banner
+                    b_col_img, b_col_info = st.columns([1, 4])
+                    with b_col_img:
+                        if res.get("image_url"):
+                            st.image(res.get("image_url"), use_column_width=True)
+                        else:
+                            st.markdown("📦 *No Image Available*")
+                    with b_col_info:
+                        st.markdown(f"### {res.get('brand_name')} — {res.get('product_title', 'Amazon Product')[:100]}")
+                        st.markdown(f"**ASIN:** `{res.get('asin')}` | **Price:** `{res.get('price') or 'N/A'}` | **Product URL:** [{res.get('product_url')}]({res.get('product_url')})")
+                        
+                        # Badges Row
+                        p_badge = res.get("brand_persona", "PL Brand")
+                        q_badge = res.get("contact_quality", "Unknown")
+                        c_disp = res.get("seller_country_display", "Unknown")
+                        pl_stat = "✅ Verified Private Label" if res.get("is_private_label") else "⚠️ Reseller / Multi-Seller"
+                        st.markdown(f"**Status:** `{p_badge}` | `{q_badge}` | `📍 {c_disp}` | `{pl_stat}`")
+
+                    # 4 Strategic Metric Cards
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    sc1, sc2, sc3, sc4 = st.columns(4)
+                    with sc1:
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <div class="metric-val" style="color:#10b981">{res.get('brand_persona')}</div>
+                            <div class="metric-lbl">Brand Persona</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with sc2:
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <div class="metric-val" style="color:#a855f7">{res.get('contact_quality')}</div>
+                            <div class="metric-lbl">Contact Quality</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with sc3:
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <div class="metric-val">{res.get('reviews', 0)}★ ({res.get('rating', 0.0)})</div>
+                            <div class="metric-lbl">ASIN Reviews & Rating</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with sc4:
+                        cat_status = res.get('all_products_under_100', 'N/A')
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <div class="metric-val" style="color:#0ea5e9">{cat_status}</div>
+                            <div class="metric-lbl">Catalog Max Reviews: {res.get('catalog_max_reviews', 0)}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    # Detail Sections: Health, Contacts, Pitch
+                    t_health, t_contacts, t_pitch = st.tabs([
+                        "🚨 Listing Health & Problem Alerts",
+                        "👤 Decision Maker & Contacts",
+                        "✉️ Tailored Cold Pitch & Milestones"
+                    ])
+
+                    with t_health:
+                        h_col1, h_col2 = st.columns(2)
+                        with h_col1:
+                            st.markdown("#### Listing Problem Checks")
+                            supp_val = "❌ Suppressed / Unavailable" if res.get("is_suppressed") else "✅ Listing Active & Available"
+                            st.write(f"• **Listing Availability:** {supp_val}")
+                            
+                            bb_val = "⚠️ Buy Box Suppressed (No Add-to-Cart)" if res.get("is_buybox_suppressed") else "✅ Buy Box Active"
+                            st.write(f"• **Buy Box Status:** {bb_val}")
+                            
+                            ret_val = "🚨 Orange 'Frequently Returned' Badge ACTIVE" if res.get("has_frequently_returned_badge") else "✅ No High Return Warning"
+                            st.write(f"• **Return Badge:** {ret_val}")
+
+                            st.write(f"• **Health Summary:** `{res.get('catalog_health_summary')}`")
+
+                        with h_col2:
+                            st.markdown("#### Catalog & Asset Quality")
+                            st.write(f"• **Launch Date:** {res.get('date_first_available')} (Active ~{res.get('brand_age_months')} mos)")
+                            st.write(f"• **BSR Sales Rank:** {res.get('bsr')}")
+                            st.write(f"• **A+ Enhanced Content:** {'✅ Yes' if res.get('has_aplus') else '❌ Missing A+ Content'}")
+                            st.write(f"• **Listing Video:** {'✅ Yes' if res.get('has_video') else '❌ Missing Product Video'}")
+                            st.write(f"• **Bullet Points:** {res.get('bullet_count', 0)} bullets (Recommended: 5)")
+                            st.write(f"• **Total Brand SKUs Scanned:** {res.get('catalog_products_count', 1)}")
+
+                    with t_contacts:
+                        c_col1, c_col2 = st.columns(2)
+                        with c_col1:
+                            st.markdown("#### Decision Maker & Channels")
+                            st.write(f"• **Founder / Decision Maker:** {res.get('founder_name')} ({res.get('decision_maker_role')})")
+                            st.write(f"• **LinkedIn Profile:** {res.get('linkedin_url')}")
+                            st.write(f"• **Direct Personal Email:** `{res.get('personal_email')}`")
+                            st.write(f"• **Customer Support Email:** `{res.get('cs_email')}`")
+                            st.write(f"• **Direct Phone:** `{res.get('phone')}`")
+                            st.write(f"• **Brand Website:** {res.get('website')}")
+                            st.write(f"• **Social Profiles:** {res.get('social_summary')}")
+                        with c_col2:
+                            st.markdown("#### Amazon Seller Profile")
+                            st.write(f"• **Buy Box Seller:** {res.get('buybox_seller')}")
+                            st.write(f"• **Seller Business Name:** {res.get('seller_business_name')}")
+                            st.write(f"• **Registered Address:** {res.get('seller_address')}")
+                            st.write(f"• **Registered Country:** {res.get('seller_country_display')}")
+                            st.write(f"• **Amazon Seller ID:** `{res.get('seller_id')}`")
+                            st.write(f"• **Seller Bio Email:** `{res.get('seller_email')}`")
+                            st.write(f"• **Seller Bio Phone:** `{res.get('seller_phone')}`")
+
+                    with t_pitch:
+                        st.markdown("#### 🎯 Personalized Cold Outreach Pitch Hook")
+                        st.info(res.get("growth_pitch_hook") or "Pitch hook not generated.")
+                        st.markdown("#### 📈 Current Baseline vs Achievable Milestones")
+                        p_col_curr, p_col_mils = st.columns(2)
+                        with p_col_curr:
+                            st.markdown("**Current Baseline Stats:**")
+                            st.write(res.get("growth_strategy_current") or "N/A")
+                        with p_col_mils:
+                            st.markdown("**Achievable Growth Milestones:**")
+                            st.write(res.get("growth_strategy_achievable") or "N/A")
 
 # ----------------------------------------------------
 # TAB 1: SINGLE SEARCH & CATEGORY CRAWL
@@ -728,61 +933,17 @@ with tab_bulk:
                 
                 def audit_asin(asin):
                     try:
-                        details = extractor.inspect_asin_details(asin)
-                        b_name = details.get("brand") or ""
-                        if not b_name:
-                            return None
-                        
-                        pl_eval = evaluate_private_label(
-                            brand_name=b_name,
-                            buybox_seller=details.get("buybox_seller", ""),
-                            all_sellers=details.get("all_sellers", []),
-                            has_brand_store=details.get("has_brand_store", False),
-                            has_aplus_content=details.get("has_aplus", False),
-                            total_offers_count=details.get("total_offers", 1)
+                        record = extractor.audit_brand_by_asin(
+                            asin_or_url=asin,
+                            check_all_brand_products_under_100=bulk_asin_check_all_under_100
                         )
-                        
-                        if not pl_eval["is_private_label"]:
+                        if not record.get("success"):
                             return None
-
-                        if not is_seller_allowed(details.get("seller_country", "Unknown"), region_filter=bulk_asin_region, exclude_countries=bulk_asin_exclude_codes):
+                        if not record.get("is_private_label"):
                             return None
-                        
-                        prod_rev = int(details.get("reviews") or 0)
-                        catalog_max_rev = prod_rev
-                        catalog_count = 1
-                        if bulk_asin_check_all_under_100:
-                            cat_check = extractor.check_brand_catalog_reviews(b_name, current_asin=asin, max_reviews=100)
-                            if not cat_check.get("all_under_threshold", True):
-                                return None
-                            catalog_max_rev = max(prod_rev, cat_check.get("max_brand_reviews", 0))
-                            catalog_count = cat_check.get("total_brand_products_found", 1)
-                        
-                        decision_maker = find_decision_maker(b_name)
-                        brand_contacts = find_brand_website_and_contacts(b_name)
-                        return {
-                            "asin": asin,
-                            "brand_name": b_name,
-                            "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
-                            "seller_country": details.get("seller_country", "Unknown"),
-                            "seller_country_display": details.get("seller_country_display", "Unknown"),
-                            "seller_business_name": details.get("seller_business_name", "Not Available"),
-                            "seller_address": details.get("seller_address", "Not Available"),
-                            "seller_id": details.get("seller_id", ""),
-                            "reviews": prod_rev,
-                            "catalog_max_reviews": catalog_max_rev,
-                            "catalog_products_count": catalog_count,
-                            "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"Max {catalog_max_rev}",
-                            "website": brand_contacts.get("website", "Not Found"),
-                            "email": brand_contacts.get("email", "Not Found"),
-                            "phone": brand_contacts.get("phone", "Not Found"),
-                            "founder_name": decision_maker.get("founder_name", "Not Found"),
-                            "linkedin_url": decision_maker.get("linkedin_url", "Not Found"),
-                            "decision_maker_role": decision_maker.get("role_title", ""),
-                            "buybox_seller": details.get("buybox_seller", ""),
-                            "pl_confidence": pl_eval.get("confidence", "High"),
-                            "product_url": f"{extractor.base_url}/dp/{asin}"
-                        }
+                        if not is_seller_allowed(record.get("seller_country", "Unknown"), region_filter=bulk_asin_region, exclude_countries=bulk_asin_exclude_codes):
+                            return None
+                        return record
                     except Exception:
                         return None
 

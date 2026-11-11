@@ -61,6 +61,12 @@ class ActiveTabScanRequest(BaseModel):
     direct_contact_only: bool = Field(default=False, description="Filter for direct founder/decision-maker contacts only")
     persona_filter: Optional[str] = Field(default=None, description="Filter by brand persona: NEW_LAUNCH, STAGNANT_VETERAN, DISTRESSED")
 
+class BrandAsinAuditRequest(BaseModel):
+    asin_or_url: str = Field(..., description="Amazon ASIN (e.g. B09XYZ1234) or product URL")
+    marketplace: Optional[str] = Field(default="amazon.com", description="Amazon marketplace domain")
+    check_all_brand_products_under_100: bool = Field(default=True, description="Verify if all brand SKUs have < 100 reviews")
+    max_reviews: int = Field(default=100, description="Review threshold cap")
+
 def background_crawl_worker(
     job_id: str,
     query: str,
@@ -203,6 +209,27 @@ def stop_job(job_id: str):
     job["should_stop"] = True
     job["current_message"] = "Stopping extraction..."
     return {"status": "stopping"}
+
+@app.post("/api/audit-brand-asin")
+def audit_brand_asin(req: BrandAsinAuditRequest):
+    """
+    Executes a comprehensive deep audit on a specific ASIN or Brand:
+    - ASIN health issues, Buy Box status, suppression, return badges
+    - Seller information, registered entity, address, Chinese seller check
+    - Full Brand Catalog check (<100 reviews across all brand products)
+    - Decision maker / founder discovery on LinkedIn
+    - Brand website, direct personal vs CS email, phone, social profiles
+    - Brand persona classification & tailored cold outreach pitch hook
+    """
+    extractor = AmazonExtractor(marketplace=req.marketplace or "amazon.com", delay_between_requests=0.3)
+    result = extractor.audit_brand_by_asin(
+        asin_or_url=req.asin_or_url,
+        check_all_brand_products_under_100=req.check_all_brand_products_under_100,
+        max_reviews=req.max_reviews
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Audit failed"))
+    return result
 
 @app.post("/api/analyze-active-tab")
 def analyze_active_tab(req: ActiveTabScanRequest):

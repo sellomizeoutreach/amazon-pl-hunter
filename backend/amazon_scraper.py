@@ -28,6 +28,37 @@ def generate_amazon_session_id() -> str:
     """Generate a realistic random Amazon session-id to prevent session-level throttling."""
     return f"{random.randint(100, 999)}-{random.randint(1000000, 9999999)}-{random.randint(1000000, 9999999)}"
 
+def extract_asin_from_text(text: str) -> Optional[str]:
+    """
+    Extracts a valid 10-character Amazon ASIN from a bare ASIN, product URL, or query string.
+    Handles:
+    - https://www.amazon.com/dp/B09XYZ1234
+    - https://www.amazon.com/gp/product/B09XYZ1234
+    - https://www.amazon.com/Title-Here/dp/B09XYZ1234/ref=...
+    - /dp/B09XYZ1234
+    - B09XYZ1234 (bare 10-character alphanumeric string)
+    """
+    if not text or not isinstance(text, str):
+        return None
+    raw = text.strip()
+    # 1. URL paths: /dp/ASIN, /gp/product/ASIN, /product/ASIN
+    m = re.search(r'/(?:dp|gp/product|product|ASIN)/([A-Z0-9]{10})(?:[/?&#]|$)', raw, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # 2. Query param ?asin=ASIN or &asin=ASIN
+    m = re.search(r'[?&]asin=([A-Z0-9]{10})(?:[&#]|$)', raw, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # 3. Standard Amazon ASIN (B0...) or ISBN-10
+    m = re.search(r'\b(B[0-9A-Z]{9}|[0-9]{9}[0-9X])\b', raw, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # 4. Fallback: any clean 10-character alphanumeric token
+    m = re.search(r'\b([A-Z0-9]{10})\b', raw, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    return None
+
 # Cache for brand catalog review verification: brand_name -> check_result
 BRAND_CATALOG_CACHE: Dict[str, Dict[str, Any]] = {}
 
@@ -408,6 +439,24 @@ class AmazonExtractor:
                 except Exception:
                     pass
 
+        # Extract Product Title
+        product_title = ""
+        title_el = soup.select_one('#productTitle, #title span')
+        if title_el:
+            product_title = title_el.get_text(strip=True)
+
+        # Extract Price
+        price = ""
+        price_el = soup.select_one('.a-price .a-offscreen, #priceblock_ourprice, #priceblock_dealprice, #corePrice_feature_div .a-offscreen, .apexPriceToPay .a-offscreen')
+        if price_el:
+            price = price_el.get_text(strip=True)
+
+        # Extract Image URL
+        image_url = ""
+        img_el = soup.select_one('#landingImage, #imgBlkFront, #main-image')
+        if img_el:
+            image_url = img_el.get('src') or img_el.get('data-old-hires') or ""
+
         # Comprehensive ASIN Health & Problem Audit
         health = audit_asin_health(soup, asin)
         if not page_reviews and health.get("reviews"):
@@ -440,6 +489,10 @@ class AmazonExtractor:
             "health_issues": health.get("health_issues", []),
             "has_video": health.get("has_video", False),
             "bullet_count": health.get("bullet_count", 0),
+            "product_title": product_title,
+            "price": price,
+            "image_url": image_url,
+            "product_url": product_url,
             "page_fetched": True
         }
 
@@ -835,3 +888,250 @@ class AmazonExtractor:
             })
 
         return extracted_records
+
+    def audit_brand_by_asin(
+        self,
+        asin_or_url: str,
+        check_all_brand_products_under_100: bool = True,
+        max_reviews: int = 100,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    ) -> Dict[str, Any]:
+        """
+        Deep Full-Audit of a Brand via a Single ASIN or Product URL.
+        Executes all SOPs and attributes:
+        1. ASIN extraction and validation
+        2. Deep Listing Inspection (Title, Price, Storefront, A+, Video, Bullets)
+        3. Seller Registered Entity, Origin & Deep Chinese Detection
+        4. Listing Health & Problem Alerts (Suppression, Buy Box Suppression, Return Badges, Rating)
+        5. Private Label Verification vs Wholesale / Reseller Negation
+        6. Full Brand Catalog Audit (Verifies whether ALL other live brand products have < max_reviews)
+        7. Decision Maker & Founder Discovery (LinkedIn finder)
+        8. Brand Website, Personal vs Support Email, Direct Phone, Social Profiles
+        9. Contact Quality Classification (⭐ Direct Decision Maker, 📧 General, ❌ Uncontactable)
+        10. Brand Persona & Stage Classification (🚀 New Launch, 📉 Stagnant Veteran, ⚠️ Distressed, 🌱 Growing)
+        11. Tailored Growth Strategy, Baseline Stats & Outreach Pitch Hook Generation
+        """
+        asin = extract_asin_from_text(asin_or_url)
+        if not asin:
+            return {
+                "success": False,
+                "error": f"Invalid Amazon ASIN or Product URL provided: '{asin_or_url}'. Please provide a 10-character ASIN (e.g. B09XYZ1234) or a valid product link."
+            }
+
+        if progress_callback:
+            progress_callback({
+                "status": "inspecting_asin",
+                "asin": asin,
+                "message": f"Step 1/5: Inspecting listing details for ASIN {asin}..."
+            })
+
+        details = self.inspect_asin_details(asin)
+        if not details.get("page_fetched"):
+            return {
+                "success": False,
+                "asin": asin,
+                "error": f"Could not load Amazon product page for ASIN {asin}. Please verify the ASIN or marketplace domain."
+            }
+
+        brand_name = details.get("brand") or ""
+        if not brand_name or brand_name.lower() in ["unknown", "generic", "brand", "null", "none", "n/a", "unbranded"]:
+            p_title = details.get("product_title", "")
+            if p_title:
+                m_b = re.match(r'^([A-Za-z0-9\s]{2,25})[:\-\|]', p_title)
+                if m_b:
+                    brand_name = m_b.group(1).strip()
+            if not brand_name:
+                brand_name = "Unbranded / Generic"
+
+        # 1. Private Label Evaluation
+        pl_eval = evaluate_private_label(
+            brand_name=brand_name,
+            buybox_seller=details.get("buybox_seller", ""),
+            all_sellers=details.get("all_sellers", []),
+            has_brand_store=details.get("has_brand_store", False),
+            has_aplus_content=details.get("has_aplus", False),
+            total_offers_count=details.get("total_offers", 1)
+        )
+
+        # 2. Brand Catalog Audit
+        if progress_callback:
+            progress_callback({
+                "status": "auditing_catalog",
+                "asin": asin,
+                "brand_name": brand_name,
+                "message": f"Step 2/5: Auditing entire Amazon brand catalog for '{brand_name}'..."
+            })
+
+        prod_reviews = details.get("reviews", 0)
+        catalog_max_rev = prod_reviews
+        catalog_count = 1
+        all_under_threshold = (prod_reviews < max_reviews)
+
+        if check_all_brand_products_under_100 and brand_name != "Unbranded / Generic":
+            catalog_audit = self.check_brand_catalog_reviews(
+                brand_name=brand_name,
+                current_asin=asin,
+                max_reviews=max_reviews
+            )
+            catalog_max_rev = catalog_audit.get("max_brand_reviews", prod_reviews)
+            catalog_count = catalog_audit.get("total_brand_products_found", 1)
+            all_under_threshold = catalog_audit.get("all_under_threshold", True)
+            catalog_audit_reason = catalog_audit.get("reason", "")
+        else:
+            catalog_audit_reason = f"Audit skipped or single SKU verified ({prod_reviews} reviews)"
+
+        # 3. Decision Maker Discovery
+        if progress_callback:
+            progress_callback({
+                "status": "discovering_contacts",
+                "asin": asin,
+                "brand_name": brand_name,
+                "message": f"Step 3/5: Searching LinkedIn founder & brand contact channels for '{brand_name}'..."
+            })
+
+        decision_maker = find_decision_maker(brand_name) if brand_name != "Unbranded / Generic" else {}
+        founder_name = decision_maker.get("founder_name", "Not Found")
+        linkedin_url = decision_maker.get("linkedin_url", "Not Found")
+        decision_role = decision_maker.get("role_title", "Founder / CEO")
+
+        # 4. Brand Website & Contact Discovery
+        brand_contacts = find_brand_website_and_contacts(brand_name, founder_name=founder_name) if brand_name != "Unbranded / Generic" else {}
+        personal_em = brand_contacts.get("personal_email", "Not Found")
+        cs_em = brand_contacts.get("cs_email", "Not Found")
+        web_ph = brand_contacts.get("phone", "Not Found")
+        seller_em = details.get("seller_email", "Not Found")
+        seller_ph = details.get("seller_phone", "Not Found")
+
+        if seller_em != "Not Found" and cs_em == "Not Found":
+            cs_em = seller_em
+
+        if personal_em != "Not Found":
+            final_email = personal_em
+            email_type = "Direct Personal"
+        elif cs_em != "Not Found":
+            final_email = cs_em
+            email_type = "Customer Support"
+        elif seller_em != "Not Found":
+            final_email = seller_em
+            email_type = "Customer Support"
+        else:
+            final_email = "Not Found"
+            email_type = "None"
+
+        final_phone = web_ph if web_ph != "Not Found" else seller_ph
+
+        has_direct_lead = (personal_em != "Not Found") or (linkedin_url != "Not Found" and "linkedin.com/in/" in linkedin_url)
+        has_any_contact = has_direct_lead or (final_email != "Not Found") or (final_phone != "Not Found")
+
+        if has_direct_lead:
+            contact_quality = "⭐ Direct Decision Maker"
+        elif has_any_contact:
+            contact_quality = "📧 General / Support Only"
+        else:
+            contact_quality = "❌ Uncontactable"
+
+        # 5. Brand Persona Classification
+        health_issues = details.get("health_issues", [])
+        persona_title, persona_badge = classify_brand_persona(
+            age_months=details.get("age_months"),
+            reviews=prod_reviews,
+            catalog_health_issues=health_issues,
+            has_aplus=details.get("has_aplus", False)
+        )
+
+        # 6. Growth Strategy & Outreach Pitch Hook
+        if progress_callback:
+            progress_callback({
+                "status": "generating_pitch",
+                "asin": asin,
+                "brand_name": brand_name,
+                "message": f"Step 4/5: Generating tailored growth strategy & outreach pitch hook..."
+            })
+
+        prod_rating = details.get("rating", 0.0)
+        strategy = generate_growth_strategy_and_pitch(
+            brand_name=brand_name,
+            persona_badge=persona_badge,
+            primary_asin=asin,
+            reviews=prod_reviews,
+            rating=prod_rating,
+            age_months=details.get("age_months"),
+            date_first_available=details.get("date_first_available", "Not Listed"),
+            health_issues=health_issues,
+            has_aplus=details.get("has_aplus", False),
+            has_video=details.get("has_video", False),
+            founder_name=founder_name
+        )
+
+        record = {
+            "success": True,
+            "asin": asin,
+            "brand_name": brand_name,
+            "brand_persona": persona_badge,
+            "brand_persona_title": persona_title,
+            "contact_quality": contact_quality,
+            "email": final_email,
+            "email_type": email_type,
+            "personal_email": personal_em,
+            "cs_email": cs_em,
+            "phone": final_phone,
+            "social_summary": brand_contacts.get("social_summary", "Not Found"),
+            "social_profiles": brand_contacts.get("social_profiles", {}),
+            "website": brand_contacts.get("website", "Not Found"),
+            "founder_name": founder_name,
+            "linkedin_url": linkedin_url,
+            "decision_maker_role": decision_role,
+            "date_first_available": details.get("date_first_available", "Not Listed"),
+            "brand_age_months": details.get("age_months") if details.get("age_months") is not None else "Unknown",
+            "catalog_health_summary": "; ".join(health_issues) if health_issues else "Healthy / No Critical Listing Alerts",
+            "health_issues": health_issues,
+            "is_suppressed": details.get("is_suppressed", False),
+            "is_buybox_suppressed": details.get("is_buybox_suppressed", False),
+            "has_frequently_returned_badge": details.get("has_frequently_returned_badge", False),
+            "has_aplus": details.get("has_aplus", False),
+            "has_video": details.get("has_video", False),
+            "has_brand_store": details.get("has_brand_store", False),
+            "bullet_count": details.get("bullet_count", 0),
+            "bsr": details.get("bsr", "Not Ranked"),
+            "growth_pitch_hook": strategy.get("pitch_hook", ""),
+            "growth_strategy_achievable": strategy.get("achievable_milestones", ""),
+            "growth_strategy_current": strategy.get("current_stats", ""),
+            "reviews": prod_reviews,
+            "rating": prod_rating,
+            "catalog_max_reviews": catalog_max_rev,
+            "catalog_products_count": catalog_count,
+            "all_products_under_100": "Yes (Verified <100)" if catalog_max_rev < 100 else f"No (Max {catalog_max_rev})",
+            "all_under_threshold": all_under_threshold,
+            "catalog_audit_reason": catalog_audit_reason,
+            "is_private_label": pl_eval.get("is_private_label", False),
+            "pl_confidence": pl_eval.get("confidence", "High"),
+            "seller_match_type": pl_eval.get("seller_match_type", ""),
+            "matched_seller": pl_eval.get("matched_seller", "") or details.get("buybox_seller", ""),
+            "buybox_seller": details.get("buybox_seller", "None"),
+            "all_sellers_found": ", ".join(details.get("all_sellers", [])) or details.get("buybox_seller", ""),
+            "total_offers": details.get("total_offers", 1),
+            "seller_country": details.get("seller_country", "Unknown"),
+            "seller_country_name": details.get("seller_country_name", "Unknown"),
+            "seller_country_display": details.get("seller_country_display", "Unknown"),
+            "seller_business_name": details.get("seller_business_name", "Not Available"),
+            "seller_address": details.get("seller_address", "Not Available"),
+            "seller_id": details.get("seller_id", ""),
+            "seller_email": seller_em,
+            "seller_phone": seller_ph,
+            "seller_bio": details.get("seller_bio", ""),
+            "product_title": details.get("product_title", ""),
+            "price": details.get("price", ""),
+            "image_url": details.get("image_url", ""),
+            "product_url": details.get("product_url", f"{self.base_url}/dp/{asin}")
+        }
+
+        if progress_callback:
+            progress_callback({
+                "status": "completed",
+                "asin": asin,
+                "brand_name": brand_name,
+                "record": record,
+                "message": f"Step 5/5: Brand audit complete for '{brand_name}' ({asin})!"
+            })
+
+        return record
