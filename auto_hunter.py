@@ -2,7 +2,10 @@
 """
 Automated Amazon Private Label Lead Hunter & Emailer
 ---------------------------------------------------
-Runs headless automated lead discovery across a keyword list:
+Runs headless automated lead discovery across an AUTO-GENERATED keyword list:
+- Keywords are discovered automatically every run from Amazon Best Sellers,
+  Amazon Movers & Shakers, and DuckDuckGo trending niche search — no manual
+  keyword input required. Keywords rotate daily for fresh niche coverage.
 - Verifies Private Label ownership
 - Audits full brand catalog: only keeps brands where ALL products have < 100 reviews
 - Strict non-China origin filter (US/UK/EU/CA)
@@ -32,42 +35,9 @@ if ROOT_DIR not in sys.path:
 
 from backend.amazon_scraper import AmazonExtractor
 from backend.auto_mailer import send_leads_email, get_email_config
-
-DEFAULT_KEYWORDS = [
-    "silicone kitchen utensils",
-    "bamboo drawer organizer",
-    "yoga mat non slip",
-    "travel packing cubes",
-    "posture corrector",
-    "pet grooming brush",
-    "desk cable management",
-    "camping hammock lightweight"
-]
+from backend.keyword_generator import generate_keywords
 
 SEEN_LEADS_FILE = os.path.join(ROOT_DIR, "data", "seen_leads.json")
-KEYWORDS_FILE = os.path.join(ROOT_DIR, "keywords.txt")
-
-def ensure_keywords_file():
-    """Ensure keywords.txt exists with default starting niches."""
-    if not os.path.exists(KEYWORDS_FILE):
-        try:
-            with open(KEYWORDS_FILE, "w", encoding="utf-8") as f:
-                f.write("\n".join(DEFAULT_KEYWORDS) + "\n")
-            print(f"Created default {KEYWORDS_FILE} with {len(DEFAULT_KEYWORDS)} niches.")
-        except Exception as e:
-            print(f"Notice creating keywords.txt: {e}")
-
-def load_keywords() -> List[str]:
-    """Loads search keywords from keywords.txt."""
-    ensure_keywords_file()
-    keywords = []
-    if os.path.exists(KEYWORDS_FILE):
-        with open(KEYWORDS_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                k = line.strip()
-                if k and not k.startswith("#"):
-                    keywords.append(k)
-    return keywords or DEFAULT_KEYWORDS
 
 def load_seen_leads() -> Set[str]:
     """Loads historical brand names to avoid duplicate outreach."""
@@ -99,7 +69,8 @@ def run_auto_hunt(
     direct_contact_only: bool = False,
     persona_filter: str = None,
     send_email: bool = True,
-    delay: float = 0.5
+    delay: float = 0.5,
+    refresh_keywords: bool = False,
 ):
     print("=" * 70)
     print("🚀 STARTING AUTOMATED AMAZON PRIVATE LABEL HUNTER")
@@ -116,13 +87,23 @@ def run_auto_hunt(
     if exclude_countries is None:
         exclude_countries = ["CN", "HK"]
 
-    keywords = load_keywords()
+    # --- AUTO-GENERATE KEYWORDS (no manual input required) ---
+    print("\n[Step 1/6] Auto-generating keyword list from Amazon BSR, Movers & Shakers, and trending search...")
+    keywords = generate_keywords(
+        marketplace=marketplace,
+        target_count=30,
+        use_cache=not refresh_keywords,
+        force_refresh=refresh_keywords,
+        include_seeds=True,
+        verbose=True,
+    )
     seen_brands = load_seen_leads()
-    print(f"Loaded {len(keywords)} keywords to hunt. Historical deduplication database: {len(seen_brands)} brands.")
+    print(f"[Step 1/6] Done. {len(keywords)} keywords ready. Historical deduplication DB: {len(seen_brands)} brands.")
 
     extractor = AmazonExtractor(marketplace=marketplace, delay_between_requests=delay)
     new_discovered_leads = []
 
+    print(f"\n[Step 2/6] Beginning lead hunt across {len(keywords)} keyword niches...\n")
     for idx, kw in enumerate(keywords, 1):
         print(f"\n[{idx}/{len(keywords)}] 🔍 Hunting Keyword: '{kw}'...")
         try:
@@ -196,6 +177,7 @@ if __name__ == "__main__":
     parser.add_argument("--direct-only", action="store_true", help="Only keep leads with direct founder/decision-maker contacts")
     parser.add_argument("--persona", type=str, default=None, choices=["NEW_LAUNCH", "STAGNANT_VETERAN", "DISTRESSED"], help="Filter by specific brand persona")
     parser.add_argument("--no-email", action="store_true", help="Skip sending email report")
+    parser.add_argument("--refresh-keywords", action="store_true", help="Force-regenerate the keyword list from Amazon BSR/Movers/DDGS, bypassing today's cache")
     args = parser.parse_args()
 
     run_auto_hunt(
@@ -204,5 +186,6 @@ if __name__ == "__main__":
         require_contactable=not args.allow_uncontactable,
         direct_contact_only=args.direct_only,
         persona_filter=args.persona,
-        send_email=not args.no_email
+        send_email=not args.no_email,
+        refresh_keywords=args.refresh_keywords,
     )

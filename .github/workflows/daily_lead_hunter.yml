@@ -23,6 +23,10 @@ on:
         description: 'Require a direct/personal founder contact (not CS email)? (true/false)'
         required: false
         default: 'false'
+      refresh_keywords:
+        description: 'Force-regenerate keywords from Amazon BSR/Movers/DDGS, bypassing cache? (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
   hunt-and-email:
@@ -65,6 +69,14 @@ jobs:
           PERSONA="${{ github.event.inputs.persona || '' }}"
           if [ -n "$PERSONA" ]; then
             FLAGS="$FLAGS --persona $PERSONA"
+          fi
+
+          # Keyword refresh: default OFF (uses daily cache for speed; Monday auto-refreshes)
+          REFRESH_KW="${{ github.event.inputs.refresh_keywords || 'false' }}"
+          # Auto-refresh keywords every Monday (day-of-week 1 in cron = Monday)
+          DOW=$(date +%u)
+          if [ "$REFRESH_KW" = "true" ] || [ "$DOW" = "1" ]; then
+            FLAGS="$FLAGS --refresh-keywords"
           fi
 
           echo "flags=$FLAGS" >> $GITHUB_OUTPUT
